@@ -1,0 +1,17 @@
+# Java / Maven
+backend/target/
+*.class
+
+# Node
+frontend/node_modules/
+frontend/dist/
+
+# 运行期数据与本地配置
+backend/data/
+.env
+*.log
+
+# IDE
+.idea/
+.vscode/
+*.iml

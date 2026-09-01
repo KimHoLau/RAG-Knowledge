@@ -1,0 +1,61 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: rag-knowledge-backend
+  servlet:
+    multipart:
+      max-file-size: 100MB
+      max-request-size: 120MB
+  datasource:
+    url: jdbc:postgresql://${PG_HOST:localhost}:${PG_PORT:5432}/${PG_DATABASE:ragknowledge}
+    username: ${PG_USERNAME:rag}
+    password: ${PG_PASSWORD:rag123456}
+  jpa:
+    hibernate:
+      ddl-auto: update
+    open-in-view: false
+
+  ai:
+    vectorstore:
+      pgvector:
+        initialize-schema: true
+        # bge-m3 dense 向量维度
+        dimensions: 1024
+        distance-type: COSINE_DISTANCE
+        index-type: HNSW
+        schema-name: public
+        table-name: vector_store
+
+rag:
+  # 对话大模型：智谱 GLM-5.3（OpenAI 兼容协议），SDK 自动在 baseUrl 后拼接 /chat/completions
+  llm:
+    base-url: ${LLM_BASE_URL:https://open.bigmodel.cn/api/paas/v4}
+    api-key: ${ZHIPUAI_API_KEY:no-key}
+    model: ${LLM_MODEL:glm-5.3}
+    temperature: 0.6
+  # 向量模型：bge-m3（任意 OpenAI 兼容服务），SDK 自动在 baseUrl 后拼接 /embeddings
+  # base-url 以 /v1 结尾；本地 Ollama 默认 http://localhost:11434/v1
+  embedding:
+    base-url: ${EMBEDDING_BASE_URL:http://localhost:11434/v1}
+    api-key: ${EMBEDDING_API_KEY:no-key}
+    model: ${EMBEDDING_MODEL:bge-m3}
+    dimensions: 1024
+  # 检索参数
+  search:
+    top-k: ${RAG_TOP_K:5}
+    similarity-threshold: ${RAG_SIMILARITY_THRESHOLD:0.45}
+  # 文档切分参数（token 数）
+  split:
+    chunk-size: 800
+    min-chunk-size: 300
+  # 入库时向量化的批大小
+  ingest:
+    batch-size: 8
+  # 原始文件保存目录
+  storage-dir: ${STORAGE_DIR:./data/uploads}
+
+logging:
+  level:
+    com.ragknowledge: DEBUG
