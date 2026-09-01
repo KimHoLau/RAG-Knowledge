@@ -9,7 +9,8 @@ spring:
       max-file-size: 100MB
       max-request-size: 120MB
   datasource:
-    url: jdbc:postgresql://${PG_HOST:localhost}:${PG_PORT:5432}/${PG_DATABASE:ragknowledge}
+    # 宿主机端口 5433：避开本机已安装 PostgreSQL 服务占用的 5432（见 docker/docker-compose.yml）
+    url: jdbc:postgresql://${PG_HOST:localhost}:${PG_PORT:5433}/${PG_DATABASE:ragknowledge}
     username: ${PG_USERNAME:rag}
     password: ${PG_PASSWORD:rag123456}
   jpa:

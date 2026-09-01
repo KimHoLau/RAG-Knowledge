@@ -8,7 +8,8 @@ services:
       POSTGRES_USER: rag
       POSTGRES_PASSWORD: rag123456
     ports:
-      - "5432:5432"
+      # 宿主机用 5433，避开本机已安装 PostgreSQL 服务占用的 5432
+      - "5433:5432"
     volumes:
       - ragknowledge-pgdata:/var/lib/postgresql/data
       - ./init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro

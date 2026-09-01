@@ -74,7 +74,7 @@ docker compose up -d
 # 首次启动会自动创建数据库 ragknowledge 并启用 vector 扩展
 ```
 
-连接信息（与 `docker-compose.yml` 一致，可用环境变量覆盖）：`localhost:5432/ragknowledge`，用户 `rag`，密码 `rag123456`。向量表 `vector_store` 由 Spring AI 首次启动时自动建表建索引。
+连接信息（与 `docker-compose.yml` 一致，可用环境变量覆盖）：`localhost:5433/ragknowledge`（宿主机端口 5433，避开本机已装 PostgreSQL 服务占用的 5432），用户 `rag`，密码 `rag123456`。向量表 `vector_store` 由 Spring AI 首次启动时自动建表建索引。
 
 ### 2. 启动 bge-m3 向量服务（任选其一）
 
