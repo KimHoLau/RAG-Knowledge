@@ -1,4 +1,5 @@
 # RAG-Knowledge 知识库系统
+![image](https://github.com/KimHoLau/RAG-Knowledge/blob/main/architecture-preview.png)
 
 基于 **Spring AI 2.0.1 + GLM-5.3 + PostgreSQL(pgvector) + bge-m3** 的企业知识库系统，提供资料入库（Word / PPT / PDF）与 RAG 检索问答能力，前端为 Vue 3。
 
