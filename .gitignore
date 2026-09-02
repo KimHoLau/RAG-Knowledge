@@ -15,3 +15,4 @@ backend/data/
 .idea/
 .vscode/
 *.iml
+.omo/
