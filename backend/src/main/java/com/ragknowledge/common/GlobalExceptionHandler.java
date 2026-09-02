@@ -59,6 +59,7 @@ public class GlobalExceptionHandler {
     @ResponseStatus(HttpStatus.INTERNAL_SERVER_ERROR)
     public ApiResult<Void> handleOther(Exception e) {
         log.error("未处理异常", e);
-        return ApiResult.error("系统繁忙，请稍后重试：" + e.getMessage());
+        // 不要把内部异常细节回显给前端（可能含 SQL、服务器路径、依赖方地址等），完整堆栈留在日志里
+        return ApiResult.error("系统繁忙，请稍后重试");
     }
 }

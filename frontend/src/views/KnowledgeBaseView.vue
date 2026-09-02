@@ -50,7 +50,25 @@
       <el-table-column label="大小" width="100">
         <template #default="{ row }">{{ fmtSize(row.fileSize) }}</template>
       </el-table-column>
-      <el-table-column prop="chunkCount" label="切片数" width="80" align="center" />
+      <el-table-column label="切片数" width="90" align="center">
+        <template #default="{ row }">
+          <span v-if="isProcessing(row) && row.chunkTotal > 0">{{ row.chunkCount }}/{{ row.chunkTotal }}</span>
+          <span v-else>{{ row.chunkCount }}</span>
+        </template>
+      </el-table-column>
+      <el-table-column label="入库进度" min-width="200" align="center">
+        <template #default="{ row }">
+          <!-- chunkTotal 为 0 表示还在解析切分阶段、总数未知，用不确定态进度条 -->
+          <el-progress
+            v-if="isProcessing(row)"
+            :percentage="progressPercent(row)"
+            :indeterminate="row.chunkTotal === 0"
+            :format="() => progressText(row)"
+            :stroke-width="14"
+          />
+          <span v-else class="muted">-</span>
+        </template>
+      </el-table-column>
       <el-table-column label="状态" width="110" align="center">
         <template #default="{ row }">
           <el-tooltip
@@ -122,14 +140,32 @@ async function load() {
 
 function ensurePolling() {
   if (pollTimer) return
-  if (!documents.value.some((d) => d.status === 'PROCESSING')) return
+  if (!documents.value.some(isProcessing)) return
   pollTimer = setInterval(async () => {
-    documents.value = await listDocuments()
-    if (!documents.value.some((d) => d.status === 'PROCESSING')) {
+    try {
+      documents.value = await listDocuments()
+    } catch {
+      // 单次轮询失败保持定时器，下一轮继续尝试
+      return
+    }
+    if (!documents.value.some(isProcessing)) {
       clearInterval(pollTimer)
       pollTimer = null
     }
-  }, 2500)
+  }, 1500)
+}
+
+function isProcessing(row) {
+  return row.status === 'PROCESSING'
+}
+
+function progressPercent(row) {
+  if (!row.chunkTotal) return 0
+  return Math.min(100, Math.floor(((row.chunkCount ?? 0) / row.chunkTotal) * 100))
+}
+
+function progressText(row) {
+  return row.chunkTotal ? `${row.chunkCount ?? 0}/${row.chunkTotal}` : '解析中…'
 }
 
 function onDrop(e) {
@@ -234,5 +270,9 @@ function fmtTime(t) {
   width: 180px;
   font-size: 12px;
   color: #909399;
+}
+
+.muted {
+  color: #c0c4cc;
 }
 </style>

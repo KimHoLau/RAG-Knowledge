@@ -100,22 +100,41 @@ public class RagService {
     }
 
     private List<SourceChunk> toChunks(List<Document> docs) {
-        List<SourceChunk> result = new ArrayList<>();
+        List<SourceChunk> result = new ArrayList<>(docs.size());
         for (int i = 0; i < docs.size(); i++) {
             Document doc = docs.get(i);
             Object docName = doc.getMetadata().get("doc_name");
-            Object distance = doc.getMetadata().get("distance");
-            double score = 0;
-            if (distance instanceof Number n) {
-                score = 1.0 - n.doubleValue();
-            }
             result.add(new SourceChunk(
                     i + 1,
                     docName != null ? docName.toString() : "未知文档",
-                    Math.max(0, Math.min(1, score)),
+                    similarityOf(doc),
                     doc.getText()));
         }
         return result;
+    }
+
+    /**
+     * 取相似度（0~1）。
+     *
+     * <p>兼容两种来源：Spring AI 2.0 起 Document 带 score 字段；部分 VectorStore 实现则把距离
+     * 写进 metadata 的 distance（余弦距离，需 1-d 换算成相似度）。
+     *
+     * <p><b>当前现状</b>：Spring AI 2.0.1 的 PgVectorStore 两者都不写，因此这里的实际返回值恒为 0，
+     * 前端展示的相关度均为 0。要拿到真实分值需自行用 JDBC 查询并把 distance 换算后回填。
+     */
+    private double similarityOf(Document doc) {
+        Double score = doc.getScore();
+        if (score != null) {
+            return clamp(score);
+        }
+        if (doc.getMetadata().get("distance") instanceof Number distance) {
+            return clamp(1.0 - distance.doubleValue());
+        }
+        return 0;
+    }
+
+    private double clamp(double value) {
+        return Math.max(0, Math.min(1, value));
     }
 
     private String buildSystemPrompt(List<SourceChunk> sources) {

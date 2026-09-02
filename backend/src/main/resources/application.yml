@@ -13,6 +13,16 @@ spring:
     url: jdbc:postgresql://${PG_HOST:localhost}:${PG_PORT:5433}/${PG_DATABASE:ragknowledge}
     username: ${PG_USERNAME:rag}
     password: ${PG_PASSWORD:rag123456}
+    hikari:
+      pool-name: rag-hikari
+      # 默认只有 10 连接：入库线程池、检索、列表轮询会一起抢，按需放开
+      maximum-pool-size: ${PG_POOL_MAX:20}
+      minimum-idle: ${PG_POOL_MIN_IDLE:5}
+      connection-timeout: 30000
+      validation-timeout: 5000
+      idle-timeout: 600000
+      # 小于数据库的连接空闲回收时间，避免拿到已被服务端关闭的连接
+      max-lifetime: 1200000
   jpa:
     hibernate:
       ddl-auto: update
@@ -35,7 +45,11 @@ rag:
     base-url: ${LLM_BASE_URL:https://open.bigmodel.cn/api/paas/v4}
     api-key: ${ZHIPUAI_API_KEY:no-key}
     model: ${LLM_MODEL:glm-5.3}
-    temperature: 0.6
+    # RAG 问答要求答案紧贴参考资料，温度偏高容易自由发挥产生幻觉
+    temperature: ${LLM_TEMPERATURE:0.3}
+    # 单次请求超时（秒）：流式长回答也要在这个时间内产出首包并持续推进
+    timeout-seconds: ${LLM_TIMEOUT_SECONDS:180}
+    max-retries: ${LLM_MAX_RETRIES:2}
   # 向量模型：bge-m3（任意 OpenAI 兼容服务），SDK 自动在 baseUrl 后拼接 /embeddings
   # base-url 以 /v1 结尾；本地 Ollama 默认 http://localhost:11434/v1
   embedding:
@@ -43,6 +57,8 @@ rag:
     api-key: ${EMBEDDING_API_KEY:no-key}
     model: ${EMBEDDING_MODEL:bge-m3}
     dimensions: 1024
+    timeout-seconds: ${EMBEDDING_TIMEOUT_SECONDS:120}
+    max-retries: ${EMBEDDING_MAX_RETRIES:2}
   # 检索参数
   search:
     top-k: ${RAG_TOP_K:5}
@@ -54,6 +70,10 @@ rag:
   # 入库时向量化的批大小
   ingest:
     batch-size: 8
+    # 入库专用线程池（见 config/AsyncConfig），限制并发避免把向量服务与连接池打满
+    core-pool-size: ${INGEST_CORE_POOL_SIZE:2}
+    max-pool-size: ${INGEST_MAX_POOL_SIZE:4}
+    queue-capacity: ${INGEST_QUEUE_CAPACITY:100}
   # 原始文件保存目录
   storage-dir: ${STORAGE_DIR:./data/uploads}
   # CORS 允许的前端来源（逗号分隔），前端换端口或部署时通过 CORS_ALLOWED_ORIGINS 覆盖
@@ -62,4 +82,5 @@ rag:
 
 logging:
   level:
-    com.ragknowledge: DEBUG
+    # 本地排障默认 DEBUG；部署到生产时用 LOG_LEVEL=INFO 收敛日志量
+    com.ragknowledge: ${LOG_LEVEL:DEBUG}
