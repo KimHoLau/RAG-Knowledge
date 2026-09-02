@@ -59,7 +59,7 @@ public class DocumentService {
         String fileType = extension(fileName);
 
         String docId = UUID.randomUUID().toString();
-        Path target = storageDir.resolve(docId + "_" + fileName);
+        Path target = storagePath(docId, fileName);
         try {
             Files.copy(file.getInputStream(), target, StandardCopyOption.REPLACE_EXISTING);
         } catch (IOException e) {
@@ -91,11 +91,16 @@ public class DocumentService {
         jdbcTemplate.update("DELETE FROM public.vector_store WHERE metadata->>'doc_id' = ?", docId);
         repository.delete(entity);
         try {
-            Files.deleteIfExists(storageDir.resolve(docId + "_" + entity.getFileName()));
+            Files.deleteIfExists(storagePath(docId, entity.getFileName()));
         } catch (IOException e) {
             log.warn("删除源文件失败：{}", e.getMessage());
         }
         log.info("文档已删除：{}（{}）", entity.getFileName(), docId);
+    }
+
+    /** 源文件落盘路径：{docId}_{原始文件名}，upload 落盘与 delete 清理必须共用同一命名规则 */
+    private Path storagePath(String docId, String fileName) {
+        return storageDir.resolve(docId + "_" + fileName);
     }
 
     private String extension(String fileName) {
