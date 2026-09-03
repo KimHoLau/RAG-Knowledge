@@ -1,10 +1,12 @@
 package com.ragknowledge.document;
 
 import com.ragknowledge.common.BizException;
+import com.ragknowledge.document.dto.DocumentFile;
 import com.ragknowledge.document.dto.DocumentVO;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.core.io.FileSystemResource;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
@@ -118,6 +120,21 @@ public class DocumentService {
         // 先删实体再删文件：即使源文件清理失败，知识库里也不会再检索到该文档
         deleteFileQuietly(storagePath(docId, entity.getFileName()));
         log.info("文档已删除：{}（{}）", entity.getFileName(), docId);
+    }
+
+    /**
+     * 取源文件用于下载核对。
+     * 入库状态不影响下载——文件在上传时就已落盘，失败/处理中的文档同样需要下载排查。
+     * 源文件被外部清理（手工删目录、换机器部署等）时给出明确提示，避免浏览器收到一个 500。
+     */
+    public DocumentFile load(String docId) {
+        DocumentEntity entity = repository.findById(docId)
+                .orElseThrow(() -> new BizException("文档不存在"));
+        Path file = storagePath(docId, entity.getFileName());
+        if (!Files.isRegularFile(file)) {
+            throw new BizException("源文件已不存在，无法下载");
+        }
+        return new DocumentFile(entity.getFileName(), new FileSystemResource(file));
     }
 
     private void deleteFileQuietly(Path file) {

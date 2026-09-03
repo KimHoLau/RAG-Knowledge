@@ -85,8 +85,11 @@
       <el-table-column label="上传时间" width="180">
         <template #default="{ row }">{{ fmtTime(row.createdAt) }}</template>
       </el-table-column>
-      <el-table-column label="操作" width="90" align="center">
+      <el-table-column label="操作" width="150" align="center">
         <template #default="{ row }">
+          <el-button type="primary" link :loading="downloadingId === row.id" @click="onDownload(row)">
+            下载
+          </el-button>
           <el-popconfirm
             title="确认删除该资料？"
             confirm-button-text="删除"
@@ -109,7 +112,7 @@
 <script setup>
 import { onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { deleteDocument, listDocuments, uploadDocument } from '../api'
+import { deleteDocument, downloadDocument, listDocuments, uploadDocument } from '../api'
 
 const ALLOWED = /\.(pdf|docx?|pptx?)$/i
 
@@ -118,6 +121,7 @@ const dragging = ref(false)
 const loading = ref(false)
 const documents = ref([])
 const uploading = ref([])
+const downloadingId = ref('')
 let pollTimer = null
 
 onMounted(async () => {
@@ -200,6 +204,17 @@ async function handleFiles(fileList) {
   setTimeout(() => {
     uploading.value = uploading.value.filter((i) => i.status === 'error')
   }, 5000)
+}
+
+async function onDownload(row) {
+  downloadingId.value = row.id
+  try {
+    await downloadDocument(row.id, row.fileName)
+  } catch {
+    // 失败提示已在 api 层统一弹出，这里只负责复位按钮状态
+  } finally {
+    downloadingId.value = ''
+  }
 }
 
 async function onDelete(row) {

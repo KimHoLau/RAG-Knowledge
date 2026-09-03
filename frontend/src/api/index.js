@@ -14,7 +14,22 @@ http.interceptors.response.use(
     return body
   },
   (error) => {
-    const msg = error.response?.data?.message || error.message || '网络异常'
+    const data = error.response?.data
+    // responseType 为 blob 时（如下载接口）错误响应体也是 Blob，
+    // 必须异步读出来才能拿到后端 {code,message} 里的中文提示，否则只能显示 HTTP 状态码
+    if (data instanceof Blob) {
+      return data.text().then((text) => {
+        let msg = '请求失败'
+        try {
+          msg = JSON.parse(text)?.message || msg
+        } catch {
+          /* 非 JSON 响应沿用默认提示 */
+        }
+        ElMessage.error(msg)
+        return Promise.reject(new Error(msg))
+      })
+    }
+    const msg = data?.message || error.message || '网络异常'
     ElMessage.error(msg)
     return Promise.reject(new Error(msg))
   },
@@ -38,6 +53,27 @@ export function uploadDocument(file, onProgress) {
 
 export function deleteDocument(id) {
   return http.delete(`/documents/${id}`)
+}
+
+/**
+ * 下载原始文件用于内容核对。
+ * 该接口直接返回文件流（不是 ApiResult 包装），因此单独处理：
+ * 由后端 Content-Disposition 无法跨域读取，文件名用列表里的 fileName 兜底。
+ */
+export async function downloadDocument(id, fileName) {
+  // 响应拦截器对成功响应返回的是 response.data，这里兼容两种情况
+  const resp = await http.get(`/documents/${id}/download`, { responseType: 'blob' })
+  const blob = resp?.data instanceof Blob ? resp.data : resp
+  if (!(blob instanceof Blob)) throw new Error('下载失败：响应不是文件流')
+
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = fileName || 'download'
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(url)
 }
 
 export function searchKnowledge(query, topK) {
