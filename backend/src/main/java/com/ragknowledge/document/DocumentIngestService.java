@@ -20,7 +20,7 @@ import java.util.function.Consumer;
 import java.util.stream.Collectors;
 
 /**
- * 资料入库：Tika 解析（PDF/Word/PPT）-> TokenTextSplitter 切分 -> bge-m3 向量化 -> pgvector 存储。
+ * 资料入库：Tika 解析（PDF/Word/PPT）-> TokenTextSplitter 切分 -> qwen3-embedding:4b 向量化 -> pgvector 存储。
  * 切片 metadata 中写入 doc_id / doc_name，用于溯源展示与按文档删除。
  */
 @Service

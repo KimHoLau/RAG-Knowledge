@@ -1,12 +1,12 @@
 # RAG-Knowledge 知识库系统
 ![image](https://github.com/KimHoLau/RAG-Knowledge/blob/main/architecture-preview.png)
 
-基于 **Spring AI 2.0.1 + GLM-5.3 + PostgreSQL(pgvector) + bge-m3** 的企业知识库系统，提供资料入库（Word / PPT / PDF）与 RAG 检索问答能力，前端为 Vue 3。
+基于 **Spring AI 2.0.1 + GLM-5.3 + PostgreSQL(pgvector) + qwen3-embedding** 的企业知识库系统，提供资料入库（Word / PPT / PDF）与 RAG 检索问答能力，前端为 Vue 3。
 
 ## 功能
 
-- **资料入库**：上传 Word（.doc/.docx）、PowerPoint（.ppt/.pptx）、PDF，自动完成文本提取（Apache Tika）→ 切分（TokenTextSplitter，中文标点友好）→ 向量化（bge-m3）→ 入库（pgvector，HNSW + 余弦距离）。异步处理，前端实时轮询状态；支持删除（级联清理向量切片）。
-- **知识检索**：基于 bge-m3 语义相似度直接检索知识库切片，展示来源文档与相似度。
+- **资料入库**：上传 Word（.doc/.docx）、PowerPoint（.ppt/.pptx）、PDF，自动完成文本提取（Apache Tika）→ 切分（TokenTextSplitter，中文标点友好）→ 向量化（qwen3-embedding:4b）→ 入库（pgvector，HNSW + 余弦距离）。异步处理，前端实时轮询状态；支持删除（级联清理向量切片）。
+- **知识检索**：基于向量语义相似度直接检索知识库切片，展示来源文档与相似度。
 - **智能问答（RAG）**：检索 Top-K 切片作为上下文交给 GLM-5.3 流式生成（SSE），回答标注引用来源，资料不足时如实告知。
 
 ## 技术栈
@@ -16,7 +16,7 @@
 | 前端 | Vue 3 + Vite + Element Plus + marked |
 | 后端 | Spring Boot 4.1.1 + Spring AI 2.0.1（Java 21） |
 | 大模型 | 智谱 GLM-5.3（OpenAI 兼容端点 `https://open.bigmodel.cn/api/paas/v4`） |
-| 向量模型 | bge-m3（1024 维，任意 OpenAI 兼容 `/embeddings` 服务，默认本地 Ollama） |
+| 向量模型 | qwen3-embedding:4b-q4_K_M（Ollama 本地，1024 维；任意 OpenAI 兼容 `/embeddings` 服务均可） |
 | 数据库 | PostgreSQL 16 + pgvector（HNSW 索引、COSINE 距离） |
 | 文档解析 | Spring AI Tika Document Reader（PDF / Word / PPT） |
 
@@ -26,11 +26,11 @@
 ┌─────────────┐   /api    ┌───────────────────────────────────────────┐
 │  Vue 3 前端  │ ────────▶ │        Spring Boot + Spring AI 2.0.1      │
 │ (5173)      │ ◀──────── │                                           │
-└─────────────┘  SSE/JSON │  入库：Tika 解析 → Token 切分 → bge-m3 向量化│
+└─────────────┘  SSE/JSON │  入库：Tika 解析 → Token 切分 → qwen3 向量化 │
                            │        │                │                 │
                            │        ▼                ▼                 │
                            │  ┌───────────┐  ┌──────────────┐          │
-                           │  │ PgVector  │  │ bge-m3 服务   │          │
+                           │  │ PgVector  │  │ qwen3 嵌入服务│          │
                            │  │ Store     │  │ (OpenAI 兼容) │          │
                            │  └─────┬─────┘  └──────────────┘          │
                            │        ▼                                   │
@@ -47,7 +47,7 @@ RAG-Knowledge/
 ├── backend/                          # Spring Boot 后端
 │   ├── pom.xml
 │   └── src/main/java/com/ragknowledge/
-│       ├── config/AiConfig.java      # GLM-5.3 / bge-m3 客户端与切分器配置
+│       ├── config/AiConfig.java      # GLM-5.3 / qwen3-embedding 客户端与切分器配置
 │       ├── document/                 # 资料入库（上传/解析/切分/向量化/删除）
 │       ├── rag/                      # RAG 检索、流式问答、知识检索 API
 │       └── common/                   # 统一响应与异常处理
@@ -65,7 +65,7 @@ RAG-Knowledge/
 - Node.js 20.19+（前端）
 - Docker & Docker Compose（数据库）
 - 智谱开放平台 API Key（https://open.bigmodel.cn）
-- 一个 bge-m3 向量服务（见第 2 步，本地 Ollama 最简单）
+- 一个向量模型服务：`qwen3-embedding:4b-q4_K_M`（本地 Ollama，见第 2 步）
 
 ### 1. 启动数据库（PostgreSQL + pgvector）
 
@@ -77,13 +77,13 @@ docker compose up -d
 
 连接信息（与 `docker-compose.yml` 一致，可用环境变量覆盖）：`localhost:5433/ragknowledge`（宿主机端口 5433，避开本机已装 PostgreSQL 服务占用的 5432），用户 `rag`，密码 `rag123456`。向量表 `vector_store` 由 Spring AI 首次启动时自动建表建索引。
 
-### 2. 启动 bge-m3 向量服务（任选其一）
+### 2. 启动向量模型服务（任选其一）
 
 | 方式 | 说明 | EMBEDDING_BASE_URL |
 |---|---|---|
-| **Ollama（推荐）** | `ollama pull bge-m3` | `http://localhost:11434/v1`（默认） |
+| **Ollama（推荐）** | `ollama pull qwen3-embedding:4b-q4_K_M` | `http://localhost:11434/v1`（默认） |
 | SiliconFlow 云端 | 控制台获取 API Key | `https://api.siliconflow.cn/v1` |
-| vLLM / Xinference 自建 | 以 OpenAI 兼容模式启动 bge-m3 | `http://<host>:<port>/v1` |
+| vLLM / Xinference 自建 | 以 OpenAI 兼容模式部署向量模型（需支持 dimensions 参数） | `http://<host>:<port>/v1` |
 | 离线调试 | `node scripts/mock-embedding-server.mjs`（伪向量，无语义，仅验证链路） | `http://localhost:9999/v1` |
 
 ### 3. 配置并启动后端
@@ -130,8 +130,8 @@ data: {"type":"done","payload":"ok"}
 
 - **扫描件 PDF 入库失败提示“未能提取文本”**：纯图片扫描件无文本层，需先 OCR（Tika 不做 OCR）。
 - **检索不到 / 命中过多**：调整 `RAG_SIMILARITY_THRESHOLD`（默认 0.45，调高更严格）与 `RAG_TOP_K`（默认 5）。
-- **更换向量服务**：任何 OpenAI 兼容 `/embeddings` 服务均可，通过 `EMBEDDING_BASE_URL / EMBEDDING_API_KEY / EMBEDDING_MODEL` 配置；**向量维度必须保持 1024**，更换维度需清空 `vector_store` 表并重新入库。
-- **两个模型为什么不用 starter 自动装配**：对话（智谱）与向量（本地/第三方 bge-m3）使用不同 baseUrl，Spring AI 2.0 的 OpenAI 模块基于官方 OpenAI Java SDK，因此在 `AiConfig` 中手工构建两套 `OpenAIOkHttpClient`。
+- **更换向量服务**：任何 OpenAI 兼容 `/embeddings` 服务均可，通过 `EMBEDDING_BASE_URL / EMBEDDING_API_KEY / EMBEDDING_MODEL` 配置；**向量输出维度必须保持 1024**（后端请求带 `dimensions=1024`；qwen3-embedding:4b 原生 2560 维由该参数截断）。换不识别 `dimensions` 参数的模型或改维度，需清空 `vector_store` 表并重新入库。
+- **两个模型为什么不用 starter 自动装配**：对话（智谱）与向量（本地 Ollama qwen3-embedding:4b）使用不同 baseUrl，Spring AI 2.0 的 OpenAI 模块基于官方 OpenAI Java SDK，因此在 `AiConfig` 中手工构建两套 `OpenAIOkHttpClient`。
 - **Spring AI 版本要求**：Spring AI 2.0.x 需搭配 Spring Boot 4.x 与 Java 17+（本项目使用 Boot 4.1.1 + Java 21）。
 
 ## 已验证

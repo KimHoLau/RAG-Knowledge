@@ -1,6 +1,6 @@
 // 最小化 OpenAI 兼容 /embeddings 模拟服务（仅用于离线联调入库/检索链路，向量无真实语义！）
 // 用法：node scripts/mock-embedding-server.mjs [port]
-// 后端配套配置：EMBEDDING_BASE_URL=http://localhost:9999/v1  EMBEDDING_MODEL=bge-m3
+// 后端配套配置：EMBEDDING_BASE_URL=http://localhost:9999/v1  EMBEDDING_MODEL=qwen3-embedding:4b
 import http from 'node:http'
 
 const DIM = 1024
@@ -57,7 +57,7 @@ const server = http.createServer((req, res) => {
     res.end(JSON.stringify({
       object: 'list',
       data,
-      model: 'mock-bge-m3',
+      model: 'mock-qwen3-embedding',
       usage: { prompt_tokens: 0, total_tokens: 0 },
     }))
   })

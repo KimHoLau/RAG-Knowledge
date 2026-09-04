@@ -32,7 +32,7 @@ spring:
     vectorstore:
       pgvector:
         initialize-schema: true
-        # bge-m3 dense 向量维度
+        # 向量列维度 1024：与 OpenAI 兼容请求的 dimensions=1024 一致（qwen3-embedding:4b 原生 2560 维，由该参数截断）
         dimensions: 1024
         distance-type: COSINE_DISTANCE
         index-type: HNSW
@@ -50,13 +50,18 @@ rag:
     # 单次请求超时（秒）：流式长回答也要在这个时间内产出首包并持续推进
     timeout-seconds: ${LLM_TIMEOUT_SECONDS:180}
     max-retries: ${LLM_MAX_RETRIES:2}
-  # 向量模型：bge-m3（任意 OpenAI 兼容服务），SDK 自动在 baseUrl 后拼接 /embeddings
-  # base-url 以 /v1 结尾；本地 Ollama 默认 http://localhost:11434/v1
+  # 向量模型（任意 OpenAI 兼容服务），SDK 自动在 baseUrl 后拼接 /embeddings
+  # base-url 必须以 /v1 结尾：Ollama 的 /v1 才是 OpenAI 兼容端点（返回 {"data":[...]}），
+  # 写成 /api 会打到原生 legacy 端点（返回 {"embedding":[...]}），SDK 解析报 'data' is not set。
+  # Docker 部署 Ollama 只需把 11434 映射到宿主机，路径仍用 /v1；本地默认 http://localhost:11434/v1
   embedding:
     base-url: ${EMBEDDING_BASE_URL:http://localhost:11434/v1}
     api-key: ${EMBEDDING_API_KEY:no-key}
-    model: ${EMBEDDING_MODEL:bge-m3}
+    model: ${EMBEDDING_MODEL:qwen3-embedding:4b-q4_K_M}
     dimensions: 1024
+    # 超时按"单批切片的端到端耗时"给足：/v1/embeddings 非流式，首字节在整批算完后才返回。
+    # qwen3-embedding:4b-q4_K_M（2.5GB，完整装入 4GB 显存）实测单批 8 条约 30s（首请求含
+    # 模型加载 ~8s），120s 有 2 倍以上余量；换 8B 级大模型（仅部分进显存、跑 CPU）才需调到 600
     timeout-seconds: ${EMBEDDING_TIMEOUT_SECONDS:120}
     max-retries: ${EMBEDDING_MAX_RETRIES:2}
   # 检索参数
@@ -67,7 +72,9 @@ rag:
   split:
     chunk-size: 800
     min-chunk-size: 300
-  # 入库时向量化的批大小
+  # 入库时向量化的批大小（每批一个 HTTP 请求，超时按单批端到端耗时算）。
+  # 8 条一批：qwen3-embedding:4b-q4_K_M（完整装入 4GB 显存）实测单批 ~30s，吞吐最优；
+  # 换 8B 级大模型（仅部分进显存、跑 CPU，单批可达 10 分钟级）时须降回 2 并放大超时，否则必超时
   ingest:
     batch-size: 8
     # 入库专用线程池（见 config/AsyncConfig），限制并发避免把向量服务与连接池打满

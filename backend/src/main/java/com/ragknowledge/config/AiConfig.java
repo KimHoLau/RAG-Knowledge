@@ -22,7 +22,7 @@ import java.util.List;
 /**
  * 大模型接入配置：
  * - 对话模型 GLM-5.3：走智谱开放平台 OpenAI 兼容端点（baseUrl 以 /api/paas/v4 结尾）
- * - 向量模型 bge-m3：走独立部署的 OpenAI 兼容 /embeddings 服务（baseUrl 以 /v1 结尾，如 Ollama）
+ * - 向量模型 qwen3-embedding:4b：走本地 Ollama 的 OpenAI 兼容 /embeddings 服务（baseUrl 以 /v1 结尾）
  * 两个模型使用不同的 baseUrl，因此不使用 openai starter 的单一连接自动装配，而是手工构建两套客户端。
  * Spring AI 2.0 的 OpenAI 模块包装官方 OpenAI Java SDK，客户端通过 OpenAIOkHttpClient 构建。
  */

@@ -2,7 +2,7 @@
   <div class="page">
     <div class="page-header">
       <h2>知识检索</h2>
-      <p>基于 bge-m3 向量相似度，直接检索知识库中的内容切片（不经过大模型）</p>
+      <p>基于 qwen3-embedding:4b-q4_K_M 向量相似度，直接检索知识库中的内容切片（不经过大模型）</p>
     </div>
 
     <div class="search-bar">

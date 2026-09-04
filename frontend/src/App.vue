@@ -19,7 +19,7 @@
           <span>智能问答</span>
         </el-menu-item>
       </el-menu>
-      <div class="aside-footer">Spring AI 2.0.1 · GLM-5.3<br />pgvector · bge-m3</div>
+      <div class="aside-footer">Spring AI 2.0.1 · GLM-5.3<br />pgvector · qwen3-embedding:4b-q4_K_M</div>
     </el-aside>
     <el-main class="main">
       <router-view />

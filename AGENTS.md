@@ -5,7 +5,7 @@
 **Branch:** main
 
 ## OVERVIEW
-企业知识库系统：上传 Word/PPT/PDF → Tika 解析 → 切分 → bge-m3 向量化 → pgvector 入库，支持语义检索与 GLM-5.3 流式 RAG 问答（SSE）。后端 Spring Boot 4.1.1 + Spring AI 2.0.1（Java 21），前端 Vue 3 + Vite 7 + Element Plus。
+企业知识库系统：上传 Word/PPT/PDF → Tika 解析 → 切分 → qwen3-embedding:4b 向量化 → pgvector 入库，支持语义检索与 GLM-5.3 流式 RAG 问答（SSE）。后端 Spring Boot 4.1.1 + Spring AI 2.0.1（Java 21），前端 Vue 3 + Vite 7 + Element Plus。
 
 ## STRUCTURE
 ```
@@ -33,7 +33,7 @@ RAG-Knowledge/
 |--------|------|----------|------|
 | RagService | Service | rag/RagService.java | RAG 核心：检索→组装上下文→GLM 流式；定义 SSE 事件协议（sources/message/done/error） |
 | AiConfig.tokenTextSplitter | Bean | config/AiConfig.java:71 | 中文标点切分边界；被 DocumentIngestService 调用 |
-| AiConfig.chatModel/embeddingModel | Bean | config/AiConfig.java | GLM-5.3（/api/paas/v4）与 bge-m3（/v1）两套 baseUrl，需同步+异步双客户端 |
+| AiConfig.chatModel/embeddingModel | Bean | config/AiConfig.java | GLM-5.3（/api/paas/v4）与 qwen3-embedding:4b（Ollama /v1）两套 baseUrl，需同步+异步双客户端 |
 | DocumentService | Service | document/ | 上传落盘、状态机、删除级联（向量切片+源文件） |
 | DocumentIngestService | Service(@Async) | document/ | 异步入库管线；metadata 写 doc_id/doc_name 供溯源与级联删除 |
 | DocumentStatus | Enum | document/ | PROCESSING→COMPLETED/FAILED，7 处引用，前端轮询依赖 |
@@ -47,7 +47,7 @@ RAG-Knowledge/
 - 前端 API 调用全部走 `frontend/src/api/index.js` 的 axios 实例，不得散落裸 axios。
 
 ## ANTI-PATTERNS (THIS PROJECT)
-- **向量维度必须保持 1024**（bge-m3 dense）。换维度必须清空 `vector_store` 表并全部重新入库。
+- **向量输出维度必须保持 1024**：后端固定请求 `dimensions=1024`，qwen3-embedding:4b 原生 2560 维由该参数截断。换不识别 `dimensions` 参数的模型或改维度，必须清空 `vector_store` 表并全部重新入库。
 - **不要**给对话/向量模型用 Spring AI openai starter 自动装配——两者 baseUrl 不同，必须在 `AiConfig` 手工构建 `OpenAIOkHttpClient`（Spring AI 2.0 包装官方 OpenAI Java SDK）。
 - **不要**手工建 `vector_store` 表（`initialize-schema: true` 自动建）；init.sql 只负责 `CREATE EXTENSION vector`。
 - Tika 不做 OCR：扫描件 PDF 无文本层，入库会 FAILED，属预期行为。
@@ -70,7 +70,7 @@ cd backend && mvn spring-boot:run          # http://localhost:8080
 cd backend && mvn package                   # 打包验证
 
 # 向量服务（三选一）
-ollama pull bge-m3                          # 默认 http://localhost:11434/v1
+ollama pull qwen3-embedding:4b-q4_K_M    # 默认 http://localhost:11434/v1
 node scripts/mock-embedding-server.mjs      # 离线伪向量 http://localhost:9999/v1
 
 # 前端
