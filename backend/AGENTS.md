@@ -14,7 +14,7 @@ Spring Boot 4.1.1 + Spring AI 2.0.1（Java 21, Maven），四包分层：`config
 | 模型客户端 | `config/AiConfig.java` | 全部 Bean 在此，改 baseUrl/model 从 `rag.*` 配置注入 |
 
 ## FLOWS
-- 入库：upload 落盘（`{uuid}_{原名}`）→ 实体 PROCESSING → @Async ingest：Tika 提取（全量读内存）→ TokenTextSplitter（800/300，中文标点分隔符）→ 按批 8 条 `vectorStore.add` → COMPLETED/FAILED。
+- 入库：upload 落盘（`{uuid}_{原名}`）→ 实体 PROCESSING → @Async ingest：Tika 提取（全量读内存）→ TokenTextSplitter（400/300，中文标点分隔符；切片长度按弱 GPU 精排耗时校定）→ 按批 8 条 `vectorStore.add` → COMPLETED/FAILED。
 - 问答：retrieve（向量召回 candidateTopK+阈值 → RerankClient 精排取 topK，失败退回向量序）→ sources 事件 → system 提示词（含 [n] 编号资料）→ GLM 流式 → message 事件 → done；任何异常 → error 事件，连接不断。
 
 ## CONVENTIONS

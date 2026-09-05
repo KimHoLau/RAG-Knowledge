@@ -86,5 +86,5 @@ cd frontend && npm run build                # 构建验证
 ## NOTES
 - 无任何测试（无 src/test、无前端测试），无 CI——验证靠 `mvn package` + `npm run build` + 手动端到端。
 - 端到端联调需三件套齐备：数据库、向量服务、智谱 API Key；缺 Key 时后端能起但问答必失败。重排序服务是可选的第四件，未启用或不可达时自动退回向量排序。
-- 检索调参：`RAG_TOP_K`（默认 5）、`RAG_CANDIDATE_TOP_K`（默认 20，送入重排序的召回候选数）、`RAG_SIMILARITY_THRESHOLD`（默认 0.45）；/api/search 不过阈值，/api/chat 检索过阈值，两者是故意的差异。
+- 检索调参：`RAG_TOP_K`（默认 5）、`RAG_CANDIDATE_TOP_K`（默认 10，送入重排序的召回候选数）、`RAG_SIMILARITY_THRESHOLD`（默认 0.45）；/api/search 不过阈值，/api/chat 检索过阈值，两者是故意的差异。
 - Spring AI 2.0.x 必须搭配 Spring Boot 4.x；TokenTextSplitter 构造器签名与 1.x 不同。

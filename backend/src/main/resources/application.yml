@@ -1,9 +1,16 @@
 server:
   port: 8080
+  # 优雅停机：等在途请求（尤其 SSE 流式回答）收尾再退进程，避免重启时回答被腰斩
+  shutdown: graceful
 
 spring:
   application:
     name: rag-knowledge-backend
+  # 虚拟线程（Java 21）：检索重排序、入库向量化、LLM 流式都是秒级阻塞调用，
+  # 平台线程池下并发请求容易堆满；PG 驱动 42.7+ 已无 synchronized pinning 问题
+  threads:
+    virtual:
+      enabled: true
   servlet:
     multipart:
       max-file-size: 100MB
@@ -73,17 +80,23 @@ rag:
     base-url: ${RERANK_BASE_URL:http://localhost:8900/v1}
     api-key: ${RERANK_API_KEY:no-key}
     model: ${RERANK_MODEL:Qwen3-Reranker-4B:Q4_K_M}
-    # 按候选整批打分的非流式接口，超时按整批端到端耗时给足
-    timeout-seconds: ${RERANK_TIMEOUT_SECONDS:30}
+    # 非流式整批打分接口。GTX 1650 Ti 实测吞吐 ~150 token/s：10 条 400-token 候选 ≈ 30s，
+    # 90s 给足 2 倍余量；强 GPU/云端精排秒级完成，超时只是上限不拖慢正常请求
+    timeout-seconds: ${RERANK_TIMEOUT_SECONDS:90}
   # 检索参数
   search:
     top-k: ${RAG_TOP_K:5}
-    # 送入重排序的向量召回候选数（≥top-k 才有精排意义，服务端截到 50 上限）
-    candidate-top-k: ${RAG_CANDIDATE_TOP_K:20}
+    # 送入重排序的向量召回候选数（≥top-k 才有精排意义，服务端截到 50 上限）。
+    # 默认 10 按弱 GPU 打分耗时校定（候选数 × 切片 token 数 ÷ ~150 tok/s），
+    # 强 GPU / SiliconFlow 云端可调回 20 换更高精排上限
+    candidate-top-k: ${RAG_CANDIDATE_TOP_K:10}
     similarity-threshold: ${RAG_SIMILARITY_THRESHOLD:0.45}
   # 文档切分参数（token 数）
+  # chunk-size 400 而非 800：重排序打分耗时与切片长度成正比，800-token 切片在 4GB 显存级 GPU 上
+  # 精排 10 条要 ~65s（1650 Ti 实测 ~150 tok/s），400 让整链路落在 30s 内且引用粒度更细；
+  # 注意切分参数只影响新入库文档，改动后旧文档需重新上传才会按新粒度重建切片
   split:
-    chunk-size: 800
+    chunk-size: 400
     min-chunk-size: 300
   # 入库时向量化的批大小（每批一个 HTTP 请求，超时按单批端到端耗时算）。
   # 8 条一批：qwen3-embedding:4b-q4_K_M（完整装入 4GB 显存）实测单批 ~30s，吞吐最优；
