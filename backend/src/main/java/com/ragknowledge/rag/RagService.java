@@ -1,5 +1,6 @@
 package com.ragknowledge.rag;
 
+import com.ragknowledge.rag.dto.RerankResponse;
 import com.ragknowledge.rag.dto.SourceChunk;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -17,7 +18,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * RAG 核心：向量检索 -> 组装上下文 -> GLM 流式生成。
+ * RAG 核心：向量粗召回 -> 重排序精排 -> 组装上下文 -> GLM 流式生成。
  * SSE 事件协议（data 均为单行 JSON）：
  *   {"type":"sources","payload":[SourceChunk...]}  检索到的引用来源（最先下发）
  *   {"type":"message","payload":"增量文本"}          流式回答内容
@@ -28,6 +29,9 @@ import java.util.List;
 public class RagService {
 
     private static final Logger log = LoggerFactory.getLogger(RagService.class);
+
+    /** 送入重排序的候选数上限：候选越多精排越准，但打分耗时随候选数线性增长，需保护向量库与重排序服务 */
+    private static final int MAX_CANDIDATES = 50;
 
     private static final String SYSTEM_PROMPT_TEMPLATE = """
             你是一个严谨的企业知识库问答助手，必须严格遵守以下规则：
@@ -42,31 +46,32 @@ public class RagService {
 
     private final VectorStore vectorStore;
     private final ChatClient chatClient;
+    private final RerankClient rerankClient;
     private final ObjectMapper objectMapper;
     private final int topK;
+    private final int candidateTopK;
     private final double similarityThreshold;
 
     public RagService(VectorStore vectorStore,
                       ChatClient chatClient,
+                      RerankClient rerankClient,
                       ObjectMapper objectMapper,
                       @Value("${rag.search.top-k}") int topK,
+                      @Value("${rag.search.candidate-top-k}") int candidateTopK,
                       @Value("${rag.search.similarity-threshold}") double similarityThreshold) {
         this.vectorStore = vectorStore;
         this.chatClient = chatClient;
+        this.rerankClient = rerankClient;
         this.objectMapper = objectMapper;
         this.topK = topK;
+        this.candidateTopK = candidateTopK;
         this.similarityThreshold = similarityThreshold;
     }
 
-    /** 知识检索：不做相似度阈值过滤，返回 Top-K 切片 */
+    /** 知识检索：不做相似度阈值过滤，向量召回后重排序，返回 Top-K 切片 */
     public List<SourceChunk> search(String query, Integer topK) {
         int k = (topK != null && topK > 0) ? Math.min(topK, 20) : this.topK;
-        List<Document> docs = vectorStore.similaritySearch(SearchRequest.builder()
-                .query(query)
-                .topK(k)
-                .similarityThreshold(0.0)
-                .build());
-        return toChunks(docs);
+        return searchInternal(query, k, 0.0);
     }
 
     public Flux<ServerSentEvent<String>> answerStream(String query) {
@@ -91,12 +96,45 @@ public class RagService {
     }
 
     private List<SourceChunk> retrieve(String query) {
+        return searchInternal(query, topK, similarityThreshold);
+    }
+
+    /**
+     * 两阶段检索：先按向量相似度粗召回候选切片（阈值过滤保留在召回阶段），再交给重排序模型精排取前 k 条。
+     * 候选数取 max(k, candidateTopK)——候选太少精排无从挑选；候选超上限时截断。
+     * 重排序未启用或失败时退回向量排序：pgvector 本身按相似度降序返回，截前 k 条即与原 Top-K 行为一致，
+     * 多召回的候选只是被丢弃，不影响结果正确性。
+     */
+    private List<SourceChunk> searchInternal(String query, int k, double threshold) {
+        int candidates = Math.min(Math.max(k, candidateTopK), MAX_CANDIDATES);
         List<Document> docs = vectorStore.similaritySearch(SearchRequest.builder()
                 .query(query)
-                .topK(topK)
-                .similarityThreshold(similarityThreshold)
+                .topK(candidates)
+                .similarityThreshold(threshold)
                 .build());
-        return toChunks(docs);
+        return rerank(query, toChunks(docs), k);
+    }
+
+    /**
+     * 重排序并把来源分值替换为重排序分值（0~1）：向量相似度只反映语义距离，
+     * 重排序分值才反映“这段资料能否回答该问题”。引用编号 [n] 按精排后的顺序重新编定。
+     */
+    private List<SourceChunk> rerank(String query, List<SourceChunk> chunks, int k) {
+        if (chunks.size() <= 1) {
+            return chunks;
+        }
+        List<String> documents = chunks.stream().map(SourceChunk::content).toList();
+        List<RerankResponse.RerankResult> ranked = rerankClient.rerank(query, documents, k);
+        if (ranked.isEmpty()) {
+            return chunks.size() > k ? new ArrayList<>(chunks.subList(0, k)) : chunks;
+        }
+        List<SourceChunk> result = new ArrayList<>(ranked.size());
+        for (int i = 0; i < ranked.size(); i++) {
+            RerankResponse.RerankResult hit = ranked.get(i);
+            SourceChunk chunk = chunks.get(hit.index());
+            result.add(new SourceChunk(i + 1, chunk.docName(), clamp(hit.relevanceScore()), chunk.content()));
+        }
+        return result;
     }
 
     private List<SourceChunk> toChunks(List<Document> docs) {
@@ -120,7 +158,8 @@ public class RagService {
      * 写进 metadata 的 distance（余弦距离，需 1-d 换算成相似度）。
      *
      * <p><b>当前现状</b>：Spring AI 2.0.1 的 PgVectorStore 两者都不写，因此这里的实际返回值恒为 0，
-     * 前端展示的相关度均为 0。要拿到真实分值需自行用 JDBC 查询并把 distance 换算后回填。
+     * 前端展示的相关度均为 0。启用重排序后分值由 RerankClient 的 relevance_score 回填，才变得有意义。
+     * 要拿到真实向量分值需自行用 JDBC 查询并把 distance 换算后回填。
      */
     private double similarityOf(Document doc) {
         Double score = doc.getScore();

@@ -64,9 +64,22 @@ rag:
     # 模型加载 ~8s），120s 有 2 倍以上余量；换 8B 级大模型（仅部分进显存、跑 CPU）才需调到 600
     timeout-seconds: ${EMBEDDING_TIMEOUT_SECONDS:120}
     max-retries: ${EMBEDDING_MAX_RETRIES:2}
+  # 重排序模型（Qwen3-Reranker）：检索先向量粗召回、再精排，提升引用资料与问题的相关性。
+  # rerank 无 OpenAI 协议，且 Ollama 没有原生 rerank 端点，需用 llama.cpp / vLLM / SiliconFlow 等承载
+  #（Jina/Cohere 风格 /rerank 协议），客户端在 base-url 后拼接 /rerank；
+  # 服务不可用时自动退回向量排序，只损失排序质量，不影响问答可用性
+  rerank:
+    enabled: ${RERANK_ENABLED:true}
+    base-url: ${RERANK_BASE_URL:http://localhost:8900/v1}
+    api-key: ${RERANK_API_KEY:no-key}
+    model: ${RERANK_MODEL:Qwen3-Reranker-4B:Q4_K_M}
+    # 按候选整批打分的非流式接口，超时按整批端到端耗时给足
+    timeout-seconds: ${RERANK_TIMEOUT_SECONDS:30}
   # 检索参数
   search:
     top-k: ${RAG_TOP_K:5}
+    # 送入重排序的向量召回候选数（≥top-k 才有精排意义，服务端截到 50 上限）
+    candidate-top-k: ${RAG_CANDIDATE_TOP_K:20}
     similarity-threshold: ${RAG_SIMILARITY_THRESHOLD:0.45}
   # 文档切分参数（token 数）
   split:

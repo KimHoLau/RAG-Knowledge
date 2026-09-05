@@ -6,7 +6,7 @@
 ## 功能
 
 - **资料入库**：上传 Word（.doc/.docx）、PowerPoint（.ppt/.pptx）、PDF，自动完成文本提取（Apache Tika）→ 切分（TokenTextSplitter，中文标点友好）→ 向量化（qwen3-embedding:4b）→ 入库（pgvector，HNSW + 余弦距离）。异步处理，前端实时轮询状态；支持删除（级联清理向量切片）。
-- **知识检索**：基于向量语义相似度直接检索知识库切片，展示来源文档与相似度。
+- **知识检索**：两阶段检索——向量语义粗召回 + Qwen3-Reranker 重排序精排，展示来源文档与相关度。
 - **智能问答（RAG）**：检索 Top-K 切片作为上下文交给 GLM-5.3 流式生成（SSE），回答标注引用来源，资料不足时如实告知。
 
 ## 技术栈
@@ -17,6 +17,7 @@
 | 后端 | Spring Boot 4.1.1 + Spring AI 2.0.1（Java 21） |
 | 大模型 | 智谱 GLM-5.3（OpenAI 兼容端点 `https://open.bigmodel.cn/api/paas/v4`） |
 | 向量模型 | qwen3-embedding:4b-q4_K_M（Ollama 本地，1024 维；任意 OpenAI 兼容 `/embeddings` 服务均可） |
+| 重排序模型 | Qwen3-Reranker-4B（Q4_K_M；Ollama 无原生 rerank 端点，由 llama.cpp / vLLM / SiliconFlow 承载） |
 | 数据库 | PostgreSQL 16 + pgvector（HNSW 索引、COSINE 距离） |
 | 文档解析 | Spring AI Tika Document Reader（PDF / Word / PPT） |
 
@@ -34,7 +35,7 @@
                            │  │ Store     │  │ (OpenAI 兼容) │          │
                            │  └─────┬─────┘  └──────────────┘          │
                            │        ▼                                   │
-                           │  问答：向量检索 Top-K → 组装上下文 → GLM-5.3 │
+                           │  问答：向量检索 Top-K → 重排序精排 → GLM-5.3 │
                            └────────┬───────────────────┬──────────────┘
                                     ▼                   ▼
                           PostgreSQL + pgvector   智谱开放平台 (GLM-5.3)
@@ -47,13 +48,13 @@ RAG-Knowledge/
 ├── backend/                          # Spring Boot 后端
 │   ├── pom.xml
 │   └── src/main/java/com/ragknowledge/
-│       ├── config/AiConfig.java      # GLM-5.3 / qwen3-embedding 客户端与切分器配置
+│       ├── config/AiConfig.java      # GLM-5.3 / qwen3-embedding / Qwen3-Reranker 客户端与切分器配置
 │       ├── document/                 # 资料入库（上传/解析/切分/向量化/删除）
-│       ├── rag/                      # RAG 检索、流式问答、知识检索 API
+│       ├── rag/                      # RAG 检索（向量召回+重排序）、流式问答、知识检索 API
 │       └── common/                   # 统一响应与异常处理
 ├── frontend/                         # Vue 3 前端（知识库管理 / 知识检索 / 智能问答）
 ├── docker/docker-compose.yml         # PostgreSQL 16 + pgvector
-├── scripts/mock-embedding-server.mjs # 离线调试用的 OpenAI 兼容 /embeddings 模拟服务
+├── scripts/mock-embedding-server.mjs # 离线调试用的 /embeddings 与 /rerank 模拟服务
 └── .env.example                      # 环境变量模板
 ```
 
@@ -66,6 +67,7 @@ RAG-Knowledge/
 - Docker & Docker Compose（数据库）
 - 智谱开放平台 API Key（https://open.bigmodel.cn）
 - 一个向量模型服务：`qwen3-embedding:4b-q4_K_M`（本地 Ollama，见第 2 步）
+- 一个重排序模型服务：`Qwen3-Reranker-4B`（可选，见第 3 步；未启用时退回向量排序）
 
 ### 1. 启动数据库（PostgreSQL + pgvector）
 
@@ -86,7 +88,20 @@ docker compose up -d
 | vLLM / Xinference 自建 | 以 OpenAI 兼容模式部署向量模型（需支持 dimensions 参数） | `http://<host>:<port>/v1` |
 | 离线调试 | `node scripts/mock-embedding-server.mjs`（伪向量，无语义，仅验证链路） | `http://localhost:9999/v1` |
 
-### 3. 配置并启动后端
+### 3. 启动重排序模型服务（可选）
+
+检索采用两阶段：先向量粗召回，再由 Qwen3-Reranker 精排。**Ollama 没有原生 rerank 端点**，Qwen3-Reranker 需用以下任一方式承载（Jina/Cohere 风格 `/rerank` 协议）：
+
+| 方式 | 说明 | RERANK_BASE_URL |
+|---|---|---|
+| **llama.cpp（推荐）** | `llama-server -m Qwen3-Reranker-4B-Q4_K_M.gguf --embedding --pooling rank --rerank --port 8900` | `http://localhost:8900/v1`（默认） |
+| SiliconFlow 云端 | 控制台获取 API Key，模型名如 `Qwen/Qwen3-Reranker-4B` | `https://api.siliconflow.cn/v1` |
+| vLLM / Xinference 自建 | 以 rerank 模式部署 | `http://<host>:<port>/v1` |
+| 离线调试 | `node scripts/mock-embedding-server.mjs`（词项重叠伪分值，仅验证链路） | `http://localhost:9999/v1` |
+
+未启用（`RERANK_ENABLED=false`）或服务不可用时自动退回向量排序，仅影响引用排序质量，不影响问答可用性。
+
+### 4. 配置并启动后端
 
 ```bash
 cd backend
@@ -95,9 +110,9 @@ mvn spring-boot:run
 # 或打包运行：mvn package && java -jar target/rag-knowledge-backend-1.0.0.jar
 ```
 
-后端默认 `http://localhost:8080`。完整可配置项见 `.env.example`（LLM 端点、向量服务、检索参数 Top-K / 相似度阈值、切分大小等）。
+后端默认 `http://localhost:8080`。完整可配置项见 `.env.example`（LLM 端点、向量服务、重排序服务、检索参数 Top-K / 召回候选数 / 相似度阈值、切分大小等）。
 
-### 4. 启动前端
+### 5. 启动前端
 
 ```bash
 cd frontend
@@ -130,6 +145,7 @@ data: {"type":"done","payload":"ok"}
 
 - **扫描件 PDF 入库失败提示“未能提取文本”**：纯图片扫描件无文本层，需先 OCR（Tika 不做 OCR）。
 - **检索不到 / 命中过多**：调整 `RAG_SIMILARITY_THRESHOLD`（默认 0.45，调高更严格）与 `RAG_TOP_K`（默认 5）。
+- **重排序未生效**：后端日志出现「重排序失败，退回向量排序」即说明重排序服务不可达，检查 `RERANK_BASE_URL` 与服务是否启动；召回候选数与最终返回条数由 `RAG_CANDIDATE_TOP_K`（默认 20）与 `RAG_TOP_K`（默认 5）控制。
 - **更换向量服务**：任何 OpenAI 兼容 `/embeddings` 服务均可，通过 `EMBEDDING_BASE_URL / EMBEDDING_API_KEY / EMBEDDING_MODEL` 配置；**向量输出维度必须保持 1024**（后端请求带 `dimensions=1024`；qwen3-embedding:4b 原生 2560 维由该参数截断）。换不识别 `dimensions` 参数的模型或改维度，需清空 `vector_store` 表并重新入库。
 - **两个模型为什么不用 starter 自动装配**：对话（智谱）与向量（本地 Ollama qwen3-embedding:4b）使用不同 baseUrl，Spring AI 2.0 的 OpenAI 模块基于官方 OpenAI Java SDK，因此在 `AiConfig` 中手工构建两套 `OpenAIOkHttpClient`。
 - **Spring AI 版本要求**：Spring AI 2.0.x 需搭配 Spring Boot 4.x 与 Java 17+（本项目使用 Boot 4.1.1 + Java 21）。
