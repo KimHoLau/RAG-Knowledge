@@ -21,6 +21,8 @@
         <java.version>21</java.version>
         <spring-ai.version>2.0.1</spring-ai.version>
         <openai-java.version>4.49.0</openai-java.version>
+        <!-- OCR 页面渲染直接用 PDFBox 3.x API；须与 Tika 传递的 pdfbox 版本一致，改 Tika 版本时同步（dependency:tree 核对） -->
+        <pdfbox.version>3.0.7</pdfbox.version>
     </properties>
 
     <dependencies>
@@ -62,6 +64,25 @@
         <dependency>
             <groupId>org.springframework.ai</groupId>
             <artifactId>spring-ai-tika-document-reader</artifactId>
+        </dependency>
+        <!-- PDF 扫描件 OCR：tess4j 内嵌 Tesseract 原生库（Windows DLL 随 jar 捆绑、JNA 运行时解压加载），
+             无需安装外部 tesseract 程序。排除其传递的 PDFBox 2.x，避免与 Tika 传递的 3.x 同类冲突 -->
+        <dependency>
+            <groupId>net.sourceforge.tess4j</groupId>
+            <artifactId>tess4j</artifactId>
+            <version>5.16.0</version>
+            <exclusions>
+                <exclusion>
+                    <groupId>org.apache.pdfbox</groupId>
+                    <artifactId>*</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+        <!-- 显式声明而不是依赖 Tika 传递：PdfOcrService 直接 import PDFBox 渲染 API，版本不能漂移 -->
+        <dependency>
+            <groupId>org.apache.pdfbox</groupId>
+            <artifactId>pdfbox</artifactId>
+            <version>${pdfbox.version}</version>
         </dependency>
         <!-- PostgreSQL + pgvector 向量库 -->
         <dependency>

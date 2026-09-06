@@ -10,11 +10,12 @@ Spring Boot 4.1.1 + Spring AI 2.0.1（Java 21, Maven），四包分层：`config
 | 检索重排序 | `rag/RerankClient.java` + `config/AiConfig.java`（RestClient Bean） | Jina/Cohere 风格 /rerank 协议（Ollama 无原生 rerank 端点）；失败退回向量排序 |
 | SSE 端点 | `rag/ChatController.java` | `POST /api/chat/stream`，`Flux<ServerSentEvent<String>>` |
 | 入库管线 | `document/DocumentIngestService.java` | `@Async`，异常吞掉并回写 FAILED 状态，不向上抛 |
+| 扫描件 OCR | `document/PdfOcrService.java` | tess4j 内嵌 Tesseract，仅 PDF 文本层 < `OCR_MIN_TEXT_LENGTH` 时触发；语言包在 `rag.ocr.tessdata-path` |
 | 上传/删除 | `document/DocumentService.java` | 删除走原生 SQL 删 `vector_store`（metadata->>'doc_id'） |
 | 模型客户端 | `config/AiConfig.java` | 全部 Bean 在此，改 baseUrl/model 从 `rag.*` 配置注入 |
 
 ## FLOWS
-- 入库：upload 落盘（`{uuid}_{原名}`）→ 实体 PROCESSING → @Async ingest：Tika 提取（全量读内存）→ TokenTextSplitter（400/300，中文标点分隔符；切片长度按弱 GPU 精排耗时校定）→ 按批 8 条 `vectorStore.add` → COMPLETED/FAILED。
+- 入库：upload 落盘（`{uuid}_{原名}`）→ 实体 PROCESSING → @Async ingest：Tika 提取（全量读内存）→ PDF 文本层过少时 PdfOcrService 逐页 OCR（进度借 chunkCount/chunkTotal 按"页"上报）→ TokenTextSplitter（400/300，中文标点分隔符；切片长度按弱 GPU 精排耗时校定）→ 按批 8 条 `vectorStore.add` → COMPLETED/FAILED。
 - 问答：retrieve（向量召回 candidateTopK+阈值 → RerankClient 精排取 topK，失败退回向量序）→ sources 事件 → system 提示词（含 [n] 编号资料）→ GLM 流式 → message 事件 → done；任何异常 → error 事件，连接不断。
 
 ## CONVENTIONS
@@ -29,5 +30,6 @@ Spring Boot 4.1.1 + Spring AI 2.0.1（Java 21, Maven），四包分层：`config
 
 ## NOTES
 - 原始文件存 `rag.storage-dir`（默认 `./data/uploads`，相对后端工作目录），gitignore 已排除。
+- OCR 语言包存 `rag.ocr.tessdata-path`（默认 `./data/tessdata`，同相对后端工作目录），`scripts/download-tessdata.mjs` 下载；缺失时扫描件入库 FAILED，errorMessage 带下载指引。
 - 无测试目录；验证 = `mvn package`。
 - 日志 `com.ragknowledge` 为 DEBUG，排障直接看控制台。

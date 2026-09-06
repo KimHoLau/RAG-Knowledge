@@ -5,7 +5,7 @@
 **Branch:** main
 
 ## OVERVIEW
-企业知识库系统：上传 Word/PPT/PDF → Tika 解析 → 切分 → qwen3-embedding:4b 向量化 → pgvector 入库，支持语义检索（向量召回 + Qwen3-Reranker 重排序精排）与 GLM-5.3 流式 RAG 问答（SSE）。后端 Spring Boot 4.1.1 + Spring AI 2.0.1（Java 21），前端 Vue 3 + Vite 7 + Element Plus。
+企业知识库系统：上传 Word/PPT/PDF → Tika 解析（扫描件 PDF 文本层缺失时自动 tess4j OCR）→ 切分 → qwen3-embedding:4b 向量化 → pgvector 入库，支持语义检索（向量召回 + Qwen3-Reranker 重排序精排）与 GLM-5.3 流式 RAG 问答（SSE）。后端 Spring Boot 4.1.1 + Spring AI 2.0.1（Java 21），前端 Vue 3 + Vite 7 + Element Plus。
 
 ## STRUCTURE
 ```
@@ -14,7 +14,7 @@ RAG-Knowledge/
 │   └── src/main/java/com/ragknowledge/{config,common,document,rag}
 ├── frontend/    # Vue 3 SPA（详见 frontend/AGENTS.md）
 ├── docker/      # PostgreSQL 16 + pgvector（compose + init.sql，仅建 vector 扩展）
-├── scripts/mock-embedding-server.mjs  # 离线联调用的伪 /embeddings 与 /rerank 服务（无真实语义）
+├── scripts/     # mock-embedding-server.mjs（离线伪 /embeddings 与 /rerank）、download-tessdata.mjs（OCR 语言包下载）
 └── .env.example # 全部环境变量模板（唯一配置真源，application.yml 只做默认值）
 ```
 
@@ -22,7 +22,8 @@ RAG-Knowledge/
 | 任务 | 位置 | 备注 |
 |------|------|------|
 | 改检索/问答行为 | `backend/.../rag/RagService.java` | 两阶段检索（Top-K/候选数/阈值）、系统提示词、SSE 协议都在这一个类 |
-| 改入库流程 | `backend/.../document/DocumentIngestService.java` | Tika→切分→批量向量化→状态回写 |
+| 改入库流程 | `backend/.../document/DocumentIngestService.java` | Tika→（扫描件 OCR）→切分→批量向量化→状态回写 |
+| 改扫描件 OCR | `backend/.../document/PdfOcrService.java` | tess4j 内嵌 Tesseract：仅 PDF 文本层过少时触发，语言包用 `scripts/download-tessdata.mjs` 下载 |
 | 改模型接入 | `backend/.../config/AiConfig.java` | 手工构建两套 OpenAI 客户端 + rerank RestClient，勿用 starter 自动装配 |
 | 改 API | 各 Controller | 统一返回 `ApiResult{code,message,data}`，code!==0 即业务错误 |
 | 改环境变量/端口 | `.env.example` + `application.yml` | yml 中 `${ENV:default}` 形式 |
@@ -37,6 +38,7 @@ RAG-Knowledge/
 | AiConfig.chatModel/embeddingModel | Bean | config/AiConfig.java | GLM-5.3（/api/paas/v4）与 qwen3-embedding:4b（Ollama /v1）两套 baseUrl，需同步+异步双客户端；rerank 走 RestClient 直连 |
 | DocumentService | Service | document/ | 上传落盘、状态机、删除级联（向量切片+源文件） |
 | DocumentIngestService | Service(@Async) | document/ | 异步入库管线；metadata 写 doc_id/doc_name 供溯源与级联删除 |
+| PdfOcrService | Service | document/PdfOcrService.java | 扫描件 PDF OCR（tess4j）：触发判断 + PDFBox 逐页渲染识别 + 页级进度回调（借 chunkCount/chunkTotal 上报） |
 | DocumentStatus | Enum | document/ | PROCESSING→COMPLETED/FAILED，7 处引用，前端轮询依赖 |
 | ApiResult / GlobalExceptionHandler | common/ | 统一响应与异常出口，前端拦截器按 code!==0 报错 |
 
@@ -51,13 +53,14 @@ RAG-Knowledge/
 - **向量输出维度必须保持 1024**：后端固定请求 `dimensions=1024`，qwen3-embedding:4b 原生 2560 维由该参数截断。换不识别 `dimensions` 参数的模型或改维度，必须清空 `vector_store` 表并全部重新入库。
 - **不要**给对话/向量模型用 Spring AI openai starter 自动装配——两者 baseUrl 不同，必须在 `AiConfig` 手工构建 `OpenAIOkHttpClient`（Spring AI 2.0 包装官方 OpenAI Java SDK）。
 - **不要**手工建 `vector_store` 表（`initialize-schema: true` 自动建）；init.sql 只负责 `CREATE EXTENSION vector`。
-- Tika 不做 OCR：扫描件 PDF 无文本层，入库会 FAILED，属预期行为。
+- OCR 只兜底 PDF：扫描件 PDF 由 tess4j 自动识别（语言包缺失时报错带下载指引，见 `scripts/download-tessdata.mjs`）；Word/PPT 内嵌的扫描图**不会** OCR，Tika 文本过少仍会 FAILED，属预期行为。
 - SSE data 必须是**单行 JSON**（前端按 `\n\n` 分帧再解析 `data:` 行）。
 - 删文档必须级联：`vector_store` 按 `metadata->>'doc_id'` 删 + 删源文件 + 删实体，三处缺一不可。
 - 不要提交 `.env`、`backend/data/`（已 gitignore，含 API Key 与用户上传件）。
 
 ## UNIQUE STYLES
 - 检索是两阶段：向量粗召回 `RAG_CANDIDATE_TOP_K`（默认 20）条 → Qwen3-Reranker 精排取 `RAG_TOP_K` 条；rerank 走 Jina/Cohere 风格 /rerank 协议（llama.cpp/vLLM/SiliconFlow 承载），任何失败自动退回向量排序，是"增强"而非"依赖"。
+- 扫描件 PDF 是自动兜底：Tika 文本少于 `OCR_MIN_TEXT_LENGTH`（默认 100 字符）才触发 tess4j OCR，OCR 进度借用 chunkCount/chunkTotal 字段按"页"上报，前端进度条零改动；OCR 失败走既有 FAILED + errorMessage 链路。
 - SSE 事件协议（前后端契约，改动需两侧同步）：`{"type":"sources"|"message"|"done"|"error","payload":...}`，sources 先于 message 下发。
 - 系统提示词强制中文回答 + `[1][2]` 引用标注 + 资料不足时如实拒答（RagService.SYSTEM_PROMPT_TEMPLATE）。
 - 无数据库迁移工具：JPA `ddl-auto: update` + Spring AI 自动建表（小项目约定，改表结构需评估存量数据）。
@@ -78,6 +81,9 @@ node scripts/mock-embedding-server.mjs      # 离线伪向量+伪 rerank http://
 # 重排序服务（可选：Ollama 无原生 rerank 端点，用 llama.cpp 承载 Qwen3-Reranker）
 llama-server -m Qwen3-Reranker-4B-Q4_K_M.gguf --embedding --pooling rank --rerank --port 8900
 
+# OCR 语言包（扫描件 PDF 识别需要，一次性下载到 backend/data/tessdata/，GitHub 失败自动切 jsDelivr）
+node scripts/download-tessdata.mjs
+
 # 前端
 cd frontend && npm install && npm run dev   # http://localhost:5173，/api 代理到 8080
 cd frontend && npm run build                # 构建验证
@@ -85,6 +91,6 @@ cd frontend && npm run build                # 构建验证
 
 ## NOTES
 - 无任何测试（无 src/test、无前端测试），无 CI——验证靠 `mvn package` + `npm run build` + 手动端到端。
-- 端到端联调需三件套齐备：数据库、向量服务、智谱 API Key；缺 Key 时后端能起但问答必失败。重排序服务是可选的第四件，未启用或不可达时自动退回向量排序。
+- 端到端联调需三件套齐备：数据库、向量服务、智谱 API Key；缺 Key 时后端能起但问答必失败。重排序服务是可选的第四件，未启用或不可达时自动退回向量排序。OCR 语言包是可选的第五件，未下载时仅扫描件 PDF 入库 FAILED，普通文档不受影响。
 - 检索调参：`RAG_TOP_K`（默认 5）、`RAG_CANDIDATE_TOP_K`（默认 10，送入重排序的召回候选数）、`RAG_SIMILARITY_THRESHOLD`（默认 0.45）；/api/search 不过阈值，/api/chat 检索过阈值，两者是故意的差异。
 - Spring AI 2.0.x 必须搭配 Spring Boot 4.x；TokenTextSplitter 构造器签名与 1.x 不同。

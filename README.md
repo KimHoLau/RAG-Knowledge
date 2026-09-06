@@ -5,7 +5,7 @@
 
 ## 功能
 
-- **资料入库**：上传 Word（.doc/.docx）、PowerPoint（.ppt/.pptx）、PDF，自动完成文本提取（Apache Tika）→ 切分（TokenTextSplitter，中文标点友好）→ 向量化（qwen3-embedding:4b）→ 入库（pgvector，HNSW + 余弦距离）。异步处理，前端实时轮询状态；支持删除（级联清理向量切片）。
+- **资料入库**：上传 Word（.doc/.docx）、PowerPoint（.ppt/.pptx）、PDF，自动完成文本提取（Apache Tika）→ 切分（TokenTextSplitter，中文标点友好）→ 向量化（qwen3-embedding:4b）→ 入库（pgvector，HNSW + 余弦距离）。异步处理，前端实时轮询状态；支持删除（级联清理向量切片）。**扫描件 PDF 自动 OCR**（tess4j 内嵌 Tesseract，本地 CPU，见常见问题）。
 - **知识检索**：两阶段检索——向量语义粗召回 + Qwen3-Reranker 重排序精排，展示来源文档与相关度。
 - **智能问答（RAG）**：检索 Top-K 切片作为上下文交给 GLM-5.3 流式生成（SSE），回答标注引用来源，资料不足时如实告知。
 
@@ -20,6 +20,7 @@
 | 重排序模型 | Qwen3-Reranker-4B（Q4_K_M；Ollama 无原生 rerank 端点，由 llama.cpp / vLLM / SiliconFlow 承载） |
 | 数据库 | PostgreSQL 16 + pgvector（HNSW 索引、COSINE 距离） |
 | 文档解析 | Spring AI Tika Document Reader（PDF / Word / PPT） |
+| 扫描件 OCR | tess4j 内嵌 Tesseract（PDFBox 逐页渲染，chi_sim+eng 语言包） |
 
 ## 架构
 
@@ -55,6 +56,7 @@ RAG-Knowledge/
 ├── frontend/                         # Vue 3 前端（知识库管理 / 知识检索 / 智能问答）
 ├── docker/docker-compose.yml         # PostgreSQL 16 + pgvector
 ├── scripts/mock-embedding-server.mjs # 离线调试用的 /embeddings 与 /rerank 模拟服务
+├── scripts/download-tessdata.mjs     # OCR 语言包下载（扫描件 PDF 识别需要，一次性）
 └── .env.example                      # 环境变量模板
 ```
 
@@ -68,6 +70,7 @@ RAG-Knowledge/
 - 智谱开放平台 API Key（https://open.bigmodel.cn）
 - 一个向量模型服务：`qwen3-embedding:4b-q4_K_M`（本地 Ollama，见第 2 步）
 - 一个重排序模型服务：`Qwen3-Reranker-4B`（可选，见第 3 步；未启用时退回向量排序）
+- （可选）扫描件 PDF 识别：`node scripts/download-tessdata.mjs` 下载 OCR 语言包（一次性，约 7MB）
 
 ### 1. 启动数据库（PostgreSQL + pgvector）
 
@@ -143,7 +146,7 @@ data: {"type":"done","payload":"ok"}
 
 ## 常见问题
 
-- **扫描件 PDF 入库失败提示“未能提取文本”**：纯图片扫描件无文本层，需先 OCR（Tika 不做 OCR）。
+- **扫描件 PDF 怎么处理**：纯图片扫描件无文本层，Tika 提取文本少于 `OCR_MIN_TEXT_LENGTH`（默认 100 字符）时自动用 tess4j 内嵌 Tesseract 逐页 OCR（本地 CPU，进度按"页"展示在原进度条）。首次使用需 `node scripts/download-tessdata.mjs` 下载语言包到 `backend/data/tessdata/`（默认 `OCR_TESSDATA_PATH`，可用 tessdata_best 同名文件替换提升精度）；Word/PPT 内嵌的扫描图不做 OCR。
 - **检索不到 / 命中过多**：调整 `RAG_SIMILARITY_THRESHOLD`（默认 0.45，调高更严格）与 `RAG_TOP_K`（默认 5）。
 - **重排序未生效**：后端日志出现「重排序失败，退回向量排序」即说明重排序服务不可达，检查 `RERANK_BASE_URL` 与服务是否启动；召回候选数与最终返回条数由 `RAG_CANDIDATE_TOP_K`（默认 20）与 `RAG_TOP_K`（默认 5）控制。
 - **更换向量服务**：任何 OpenAI 兼容 `/embeddings` 服务均可，通过 `EMBEDDING_BASE_URL / EMBEDDING_API_KEY / EMBEDDING_MODEL` 配置；**向量输出维度必须保持 1024**（后端请求带 `dimensions=1024`；qwen3-embedding:4b 原生 2560 维由该参数截断）。换不识别 `dimensions` 参数的模型或改维度，需清空 `vector_store` 表并重新入库。
@@ -155,3 +158,4 @@ data: {"type":"done","payload":"ok"}
 - 后端 `mvn package` 编译打包通过（Spring Boot 4.1.1 + Spring AI 2.0.1，适配 2.0 的官方 OpenAI SDK 客户端 API 与 TokenTextSplitter 新签名）。
 - 前端 `npm run build` 构建通过（Vite 7 + Vue 3.5 + Element Plus）。
 - 端到端联调（入库 → 检索 → 问答）需要数据库、向量服务与 API Key，请按「快速开始」在本机环境执行。
+- 扫描件 OCR：tess4j 5.16.0（内嵌原生库）+ chi_sim/eng 语言包本机冒烟通过——无文本层的伪扫描件 PDF 逐页识别成功，300 DPI 单页约 2s。

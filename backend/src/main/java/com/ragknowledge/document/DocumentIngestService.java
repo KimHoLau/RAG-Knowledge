@@ -20,7 +20,8 @@ import java.util.function.Consumer;
 import java.util.stream.Collectors;
 
 /**
- * 资料入库：Tika 解析（PDF/Word/PPT）-> TokenTextSplitter 切分 -> qwen3-embedding:4b 向量化 -> pgvector 存储。
+ * 资料入库：Tika 解析（PDF/Word/PPT，扫描件 PDF 文本层缺失时自动转 PdfOcrService 识别）
+ * -> TokenTextSplitter 切分 -> qwen3-embedding:4b 向量化 -> pgvector 存储。
  * 切片 metadata 中写入 doc_id / doc_name，用于溯源展示与按文档删除。
  */
 @Service
@@ -32,17 +33,20 @@ public class DocumentIngestService {
     private final DocumentVectorRepository vectorRepository;
     private final VectorStore vectorStore;
     private final TokenTextSplitter textSplitter;
+    private final PdfOcrService ocrService;
     private final int batchSize;
 
     public DocumentIngestService(DocumentRepository repository,
                                  DocumentVectorRepository vectorRepository,
                                  VectorStore vectorStore,
                                  TokenTextSplitter textSplitter,
+                                 PdfOcrService ocrService,
                                  @Value("${rag.ingest.batch-size}") int batchSize) {
         this.repository = repository;
         this.vectorRepository = vectorRepository;
         this.vectorStore = vectorStore;
         this.textSplitter = textSplitter;
+        this.ocrService = ocrService;
         this.batchSize = Math.max(1, batchSize);
     }
 
@@ -51,8 +55,14 @@ public class DocumentIngestService {
         long startAt = System.currentTimeMillis();
         try {
             String text = extractText(file);
+            // 扫描件 PDF 没有有效文本层：自动转 tess4j OCR，识别文本回填后走同一条切分/向量化管线，
+            // OCR 是分钟级耗时操作，页级进度借 chunkCount/chunkTotal 上报，前端同一进度条展示
+            if (ocrService.shouldOcr(file, text)) {
+                log.info("检测到扫描件 PDF（Tika 文本 {} 字符），转 OCR 识别：{}", text.length(), fileName);
+                text = ocrService.recognizePdf(file, (done, total) -> reportProgress(docId, done, total));
+            }
             if (text.isBlank()) {
-                throw new IllegalStateException("未能从文件中提取到文本内容（扫描件 PDF 需先做 OCR 处理）");
+                throw new IllegalStateException("未能从文件中提取到文本内容（OCR 识别后仍无有效文本）");
             }
             // 入库前先清掉该文档的历史切片：失败重传、重复入库都不会留下重复向量
             vectorRepository.deleteByDocId(docId);
@@ -105,7 +115,10 @@ public class DocumentIngestService {
                 .trim();
     }
 
-    /** 回写入库进度（已完成切片数 / 切片总数），不改动状态，前端据此渲染进度条 */
+    /**
+     * 回写入库进度并渲染前端进度条，不改状态。
+     * OCR 阶段为已完成页数/总页数，切分向量化阶段为已完成切片数/切片总数，同一进度条分阶段复用。
+     */
     private void reportProgress(String docId, int done, int total) {
         mutateDocument(docId, entity -> {
             entity.setChunkCount(done);
