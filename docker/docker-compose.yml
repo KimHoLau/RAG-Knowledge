@@ -1,3 +1,5 @@
+# 可选容器化方案：本机未安装 PostgreSQL 时用这里的 PostgreSQL 16 + pgvector。
+# 后端默认直连本机 PostgreSQL（5432）；使用本方案时在 .env 中改 DB_PORT=5433、DB_USER=rag、DB_PASSWORD=rag123456
 services:
   postgres:
     image: pgvector/pgvector:pg16

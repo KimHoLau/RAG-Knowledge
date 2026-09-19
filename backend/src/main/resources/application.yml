@@ -16,15 +16,16 @@ spring:
       max-file-size: 100MB
       max-request-size: 120MB
   datasource:
-    # 宿主机端口 5433：避开本机已安装 PostgreSQL 服务占用的 5432（见 docker/docker-compose.yml）
-    url: jdbc:postgresql://${PG_HOST:localhost}:${PG_PORT:5433}/${PG_DATABASE:ragknowledge}
-    username: ${PG_USERNAME:rag}
-    password: ${PG_PASSWORD:rag123456}
+    # 默认直连本机已安装的 PostgreSQL（5432）；.env 是唯一配置真源，这里只做默认值。
+    # docker/docker-compose.yml 是可选容器化方案（宿主机端口 5433）
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:ragknowledge}
+    username: ${DB_USER:postgres}
+    password: ${DB_PASSWORD:123456}
     hikari:
       pool-name: rag-hikari
       # 默认只有 10 连接：入库线程池、检索、列表轮询会一起抢，按需放开
-      maximum-pool-size: ${PG_POOL_MAX:20}
-      minimum-idle: ${PG_POOL_MIN_IDLE:5}
+      maximum-pool-size: ${DB_POOL_MAX:20}
+      minimum-idle: ${DB_POOL_MIN_IDLE:5}
       connection-timeout: 30000
       validation-timeout: 5000
       idle-timeout: 600000
@@ -118,7 +119,7 @@ rag:
     language: ${OCR_LANGUAGE:chi_sim+eng}
     # 渲染 DPI：300 为识别精度与耗时的平衡点，低配机器可降到 200
     dpi: ${OCR_DPI:300}
-    # Tika 提取文本少于该字符数视为无有效文本层（正常 PDF 一页就有上百字符）
+    # Tika 提取文本少于该字符数视为无有效文本层，触发整本 OCR 兜底（页级兜底改造后按单页判断）
     min-text-length: ${OCR_MIN_TEXT_LENGTH:100}
     # OCR 最大页数保护（0 = 不限制）：防止数百页扫描件长期占用入库线程池
     max-pages: ${OCR_MAX_PAGES:0}

@@ -13,7 +13,7 @@ RAG-Knowledge/
 ├── backend/     # Spring Boot 后端（详见 backend/AGENTS.md）
 │   └── src/main/java/com/ragknowledge/{config,common,document,rag}
 ├── frontend/    # Vue 3 SPA（详见 frontend/AGENTS.md）
-├── docker/      # PostgreSQL 16 + pgvector（compose + init.sql，仅建 vector 扩展）
+├── docker/      # PostgreSQL 16 + pgvector（可选容器化方案；init.sql 仅建 vector 扩展）
 ├── scripts/     # mock-embedding-server.mjs（离线伪 /embeddings 与 /rerank）、download-tessdata.mjs（OCR 语言包下载）
 └── .env.example # 全部环境变量模板（唯一配置真源，application.yml 只做默认值）
 ```
@@ -22,12 +22,13 @@ RAG-Knowledge/
 | 任务 | 位置 | 备注 |
 |------|------|------|
 | 改检索/问答行为 | `backend/.../rag/RagService.java` | 两阶段检索（Top-K/候选数/阈值）、系统提示词、SSE 协议都在这一个类 |
-| 改入库流程 | `backend/.../document/DocumentIngestService.java` | Tika→（扫描件 OCR）→切分→批量向量化→状态回写 |
+| 改入库流程 | `backend/.../document/DocumentIngestService.java` | 文本单元提取→切分→批量向量化→状态回写 |
+| 改文本提取/定位单元 | `backend/.../document/TextExtractionService.java` | 各格式提取路径汇成统一文本单元（文本+可空定位 page/section），扫描件整本 OCR 兜底暂挂于此 |
 | 改扫描件 OCR | `backend/.../document/PdfOcrService.java` | tess4j 内嵌 Tesseract：仅 PDF 文本层过少时触发，语言包用 `scripts/download-tessdata.mjs` 下载 |
 | 改模型接入 | `backend/.../config/AiConfig.java` | 手工构建两套 OpenAI 客户端 + rerank RestClient，勿用 starter 自动装配 |
 | 改 API | 各 Controller | 统一返回 `ApiResult{code,message,data}`，code!==0 即业务错误 |
 | 改环境变量/端口 | `.env.example` + `application.yml` | yml 中 `${ENV:default}` 形式 |
-| 本地起库 | `docker/docker-compose.yml` | 宿主机端口 **5433**（非 5432） |
+| 本地起库（可选容器化） | `docker/docker-compose.yml` | 宿主机端口 **5433**；默认配置直连本机 PostgreSQL **5432**（DB_* 一套变量） |
 
 ## CODE MAP
 | Symbol | Type | Location | Role |
@@ -44,7 +45,7 @@ RAG-Knowledge/
 
 ## CONVENTIONS
 - 注释、日志、提示词、UI 文案全部简体中文。
-- 代码注释解释"为什么"（端口为何 5433、为何不用 starter 等），改行为时同步更新注释。
+- 代码注释解释"为什么"（为何不用 starter、为何手工建客户端等），改行为时同步更新注释。
 - 新配置一律 `application.yml` 中 `${ENV_VAR:default}`，并在 `.env.example` 补一行说明。
 - 后端 DTO 用 record；Controller 薄、Service 承载逻辑；构造器注入。
 - 前端 API 调用全部走 `frontend/src/api/index.js` 的 axios 实例，不得散落裸 axios。
@@ -67,7 +68,8 @@ RAG-Knowledge/
 
 ## COMMANDS
 ```bash
-# 数据库（PostgreSQL 16 + pgvector，端口 5433）
+# 数据库（默认直连本机 PostgreSQL 5432，连接配置见 .env.example 的 DB_* 一套；
+# 无本机库时可用可选容器化方案，宿主机端口 5433）
 cd docker && docker compose up -d
 
 # 后端（需先 export ZHIPUAI_API_KEY=...）

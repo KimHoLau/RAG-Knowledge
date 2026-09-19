@@ -66,21 +66,31 @@ RAG-Knowledge/
 
 - JDK 21+、Maven 3.9+（后端）
 - Node.js 20.19+（前端）
-- Docker & Docker Compose（数据库）
+- PostgreSQL 16+（本机安装；无本机库时可用 Docker Compose 容器化方案，见第 1 步）
 - 智谱开放平台 API Key（https://open.bigmodel.cn）
 - 一个向量模型服务：`qwen3-embedding:4b-q4_K_M`（本地 Ollama，见第 2 步）
 - 一个重排序模型服务：`Qwen3-Reranker-4B`（可选，见第 3 步；未启用时退回向量排序）
 - （可选）扫描件 PDF 识别：`node scripts/download-tessdata.mjs` 下载 OCR 语言包（一次性，约 7MB）
 
-### 1. 启动数据库（PostgreSQL + pgvector）
+### 1. 准备数据库（PostgreSQL + pgvector）
+
+默认配置直连本机已安装的 PostgreSQL（`localhost:5432`，用户/口令按实际安装通过 `.env` 或环境变量调整），需先建库 `ragknowledge` 并启用 `vector` 扩展：
+
+```sql
+CREATE DATABASE ragknowledge;
+\c ragknowledge
+CREATE EXTENSION IF NOT EXISTS vector;
+```
+
+没有本机库时，可选用 Docker Compose 容器化方案（宿主机端口 5433）：
 
 ```bash
 cd docker
 docker compose up -d
-# 首次启动会自动创建数据库 ragknowledge 并启用 vector 扩展
+# 首次启动会自动创建数据库 ragknowledge（用户 rag / 密码 rag123456）并启用 vector 扩展
 ```
 
-连接信息（与 `docker-compose.yml` 一致，可用环境变量覆盖）：`localhost:5433/ragknowledge`（宿主机端口 5433，避开本机已装 PostgreSQL 服务占用的 5432），用户 `rag`，密码 `rag123456`。向量表 `vector_store` 由 Spring AI 首次启动时自动建表建索引。
+使用容器化方案时，在 `.env` 中把 `DB_PORT` 改为 `5433`、`DB_USER=rag`、`DB_PASSWORD=rag123456`。向量表 `vector_store` 由 Spring AI 首次启动时自动建表建索引。
 
 ### 2. 启动向量模型服务（任选其一）
 
