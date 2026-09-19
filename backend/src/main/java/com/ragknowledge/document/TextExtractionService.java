@@ -43,7 +43,7 @@ public class TextExtractionService {
         String text = tikaText(file);
         boolean ocrAttempted = false;
         if (ocrService.shouldOcr(file, text)) {
-            log.info("检测到扫描件 PDF（Tika 文本 {} 字符），转 OCR 识别：{}", text.length(), file.getFileName());
+            log.info("检测到扫描件 PDF（Tika 文本 {} 字符），转 OCR 兜底识别：{}", text.length(), file.getFileName());
             text = ocrService.recognizePdf(file, pageProgress);
             ocrAttempted = true;
         }

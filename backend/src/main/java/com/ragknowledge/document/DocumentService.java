@@ -114,8 +114,7 @@ public class DocumentService {
 
     @Transactional
     public void delete(String docId) {
-        DocumentEntity entity = repository.findById(docId)
-                .orElseThrow(() -> new BizException("文档不存在"));
+        DocumentEntity entity = requireDocument(docId);
         // 删除该文档写入向量库的全部切片（doc_id 写在切片 metadata 中）
         vectorRepository.deleteByDocId(docId);
         repository.delete(entity);
@@ -130,8 +129,7 @@ public class DocumentService {
      * 源文件被外部清理（手工删目录、换机器部署等）时给出明确提示，避免浏览器收到一个 500。
      */
     public DocumentFile load(String docId) {
-        DocumentEntity entity = repository.findById(docId)
-                .orElseThrow(() -> new BizException("文档不存在"));
+        DocumentEntity entity = requireDocument(docId);
         Path file = storagePath(docId, entity.getFileName());
         if (!Files.isRegularFile(file)) {
             throw new BizException("源文件已不存在，无法下载");
@@ -145,8 +143,7 @@ public class DocumentService {
      * 触发前校验源文件仍在盘——文件被外部清理时给明确提示，而不是等入库线程稍后才报错。
      */
     public DocumentVO retry(String docId) {
-        DocumentEntity entity = repository.findById(docId)
-                .orElseThrow(() -> new BizException("文档不存在"));
+        DocumentEntity entity = requireDocument(docId);
         if (entity.getStatus() != DocumentStatus.FAILED) {
             throw new BizException("仅入库失败的文档可重试（当前状态：" + statusText(entity.getStatus()) + "）");
         }
@@ -201,6 +198,11 @@ public class DocumentService {
             case COMPLETED -> "已完成";
             case FAILED -> "失败";
         };
+    }
+
+    /** 按 id 取文档，不存在时报业务错误：下载、删除与重试共用同一出口 */
+    private DocumentEntity requireDocument(String docId) {
+        return repository.findById(docId).orElseThrow(() -> new BizException("文档不存在"));
     }
 
     private void deleteFileQuietly(Path file) {
