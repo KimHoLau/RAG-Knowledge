@@ -71,7 +71,7 @@ public class RagService {
     /** 知识检索：不做相似度阈值过滤，向量召回后重排序，返回 Top-K 切片 */
     public List<SourceChunk> search(String query, Integer topK) {
         int k = (topK != null && topK > 0) ? Math.min(topK, 20) : this.topK;
-        return searchInternal(query, k, 0.0);
+        return retrieveWithRerank(query, k, 0.0);
     }
 
     public Flux<ServerSentEvent<String>> answerStream(String query) {
@@ -96,7 +96,7 @@ public class RagService {
     }
 
     private List<SourceChunk> retrieve(String query) {
-        return searchInternal(query, topK, similarityThreshold);
+        return retrieveWithRerank(query, topK, similarityThreshold);
     }
 
     /**
@@ -105,7 +105,7 @@ public class RagService {
      * 重排序未启用或失败时退回向量排序：pgvector 本身按相似度降序返回，截前 k 条即与原 Top-K 行为一致，
      * 多召回的候选只是被丢弃，不影响结果正确性。
      */
-    private List<SourceChunk> searchInternal(String query, int k, double threshold) {
+    private List<SourceChunk> retrieveWithRerank(String query, int k, double threshold) {
         int candidates = Math.min(Math.max(k, candidateTopK), MAX_CANDIDATES);
         List<Document> docs = vectorStore.similaritySearch(SearchRequest.builder()
                 .query(query)
@@ -120,9 +120,7 @@ public class RagService {
      * 重排序分值才反映“这段资料能否回答该问题”。引用编号 [n] 按精排后的顺序重新编定。
      */
     private List<SourceChunk> rerank(String query, List<SourceChunk> chunks, int k) {
-        if (chunks.size() <= 1) {
-            return chunks;
-        }
+        // 单候选无需精排：这一判断由 RerankClient 统一负责（未启用/候选不足/静默期/失败一律返回空列表），空则按向量序兜底
         List<String> documents = chunks.stream().map(SourceChunk::content).toList();
         List<RerankResponse.RerankResult> ranked = rerankClient.rerank(query, documents, k);
         if (ranked.isEmpty()) {

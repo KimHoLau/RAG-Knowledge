@@ -1,6 +1,7 @@
 package com.ragknowledge.document;
 
 import net.sourceforge.tess4j.Tesseract;
+import net.sourceforge.tess4j.TesseractException;
 import org.apache.pdfbox.Loader;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.rendering.ImageType;
@@ -11,6 +12,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.awt.image.BufferedImage;
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Locale;
@@ -63,7 +65,7 @@ public class PdfOcrService {
      * pageProgress 回调 (已完成页数, 总页数)：入库线程借 chunkCount/chunkTotal 字段上报页级进度，
      * 前端进度条无需改动即可展示 OCR 进度，进入切分阶段后被真实切片数覆盖。
      */
-    public String recognizePdf(Path pdf, BiConsumer<Integer, Integer> pageProgress) throws Exception {
+    public String recognizePdf(Path pdf, BiConsumer<Integer, Integer> pageProgress) throws IOException, TesseractException {
         checkTessdata();
         // tess4j 的 Tesseract 实例非线程安全（内部持有指向本地库的状态），入库线程池最多 4 并发，
         // 每次识别新建实例而不是共享，避免并发扫描件互相污染识别结果

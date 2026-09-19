@@ -59,7 +59,7 @@ RAG-Knowledge/
 - 不要提交 `.env`、`backend/data/`（已 gitignore，含 API Key 与用户上传件）。
 
 ## UNIQUE STYLES
-- 检索是两阶段：向量粗召回 `RAG_CANDIDATE_TOP_K`（默认 20）条 → Qwen3-Reranker 精排取 `RAG_TOP_K` 条；rerank 走 Jina/Cohere 风格 /rerank 协议（llama.cpp/vLLM/SiliconFlow 承载），任何失败自动退回向量排序，是"增强"而非"依赖"。
+- 检索是两阶段：向量粗召回 `RAG_CANDIDATE_TOP_K`（默认 10）条 → Qwen3-Reranker 精排取 `RAG_TOP_K` 条；rerank 走 Jina/Cohere 风格 /rerank 协议（llama.cpp/vLLM/SiliconFlow 承载），任何失败自动退回向量排序，是"增强"而非"依赖"。
 - 扫描件 PDF 是自动兜底：Tika 文本少于 `OCR_MIN_TEXT_LENGTH`（默认 100 字符）才触发 tess4j OCR，OCR 进度借用 chunkCount/chunkTotal 字段按"页"上报，前端进度条零改动；OCR 失败走既有 FAILED + errorMessage 链路。
 - SSE 事件协议（前后端契约，改动需两侧同步）：`{"type":"sources"|"message"|"done"|"error","payload":...}`，sources 先于 message 下发。
 - 系统提示词强制中文回答 + `[1][2]` 引用标注 + 资料不足时如实拒答（RagService.SYSTEM_PROMPT_TEMPLATE）。

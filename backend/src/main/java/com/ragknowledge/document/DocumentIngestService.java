@@ -57,12 +57,17 @@ public class DocumentIngestService {
             String text = extractText(file);
             // 扫描件 PDF 没有有效文本层：自动转 tess4j OCR，识别文本回填后走同一条切分/向量化管线，
             // OCR 是分钟级耗时操作，页级进度借 chunkCount/chunkTotal 上报，前端同一进度条展示
+            boolean ocrAttempted = false;
             if (ocrService.shouldOcr(file, text)) {
                 log.info("检测到扫描件 PDF（Tika 文本 {} 字符），转 OCR 识别：{}", text.length(), fileName);
                 text = ocrService.recognizePdf(file, (done, total) -> reportProgress(docId, done, total));
+                ocrAttempted = true;
             }
             if (text.isBlank()) {
-                throw new IllegalStateException("未能从文件中提取到文本内容（OCR 识别后仍无有效文本）");
+                // 未走 OCR 时（功能关闭或非 PDF）如实说"无文本层"，不要误报成 OCR 的识别结果
+                throw new IllegalStateException(ocrAttempted
+                        ? "未能从文件中提取到文本内容（OCR 识别后仍无有效文本）"
+                        : "未能从文件中提取到文本内容（文档无有效文本层；若为扫描件 PDF 请确认 OCR 已开启并已下载语言包）");
             }
             // 入库前先清掉该文档的历史切片：失败重传、重复入库都不会留下重复向量
             vectorRepository.deleteByDocId(docId);

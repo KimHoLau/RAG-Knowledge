@@ -148,7 +148,7 @@ data: {"type":"done","payload":"ok"}
 
 - **扫描件 PDF 怎么处理**：纯图片扫描件无文本层，Tika 提取文本少于 `OCR_MIN_TEXT_LENGTH`（默认 100 字符）时自动用 tess4j 内嵌 Tesseract 逐页 OCR（本地 CPU，进度按"页"展示在原进度条）。首次使用需 `node scripts/download-tessdata.mjs` 下载语言包到 `backend/data/tessdata/`（默认 `OCR_TESSDATA_PATH`，可用 tessdata_best 同名文件替换提升精度）；Word/PPT 内嵌的扫描图不做 OCR。
 - **检索不到 / 命中过多**：调整 `RAG_SIMILARITY_THRESHOLD`（默认 0.45，调高更严格）与 `RAG_TOP_K`（默认 5）。
-- **重排序未生效**：后端日志出现「重排序失败，退回向量排序」即说明重排序服务不可达，检查 `RERANK_BASE_URL` 与服务是否启动；召回候选数与最终返回条数由 `RAG_CANDIDATE_TOP_K`（默认 20）与 `RAG_TOP_K`（默认 5）控制。
+- **重排序未生效**：后端日志出现「重排序失败，退回向量排序」即说明重排序服务不可达，检查 `RERANK_BASE_URL` 与服务是否启动；召回候选数与最终返回条数由 `RAG_CANDIDATE_TOP_K`（默认 10）与 `RAG_TOP_K`（默认 5）控制。
 - **更换向量服务**：任何 OpenAI 兼容 `/embeddings` 服务均可，通过 `EMBEDDING_BASE_URL / EMBEDDING_API_KEY / EMBEDDING_MODEL` 配置；**向量输出维度必须保持 1024**（后端请求带 `dimensions=1024`；qwen3-embedding:4b 原生 2560 维由该参数截断）。换不识别 `dimensions` 参数的模型或改维度，需清空 `vector_store` 表并重新入库。
 - **两个模型为什么不用 starter 自动装配**：对话（智谱）与向量（本地 Ollama qwen3-embedding:4b）使用不同 baseUrl，Spring AI 2.0 的 OpenAI 模块基于官方 OpenAI Java SDK，因此在 `AiConfig` 中手工构建两套 `OpenAIOkHttpClient`。
 - **Spring AI 版本要求**：Spring AI 2.0.x 需搭配 Spring Boot 4.x 与 Java 17+（本项目使用 Boot 4.1.1 + Java 21）。
