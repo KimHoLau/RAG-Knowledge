@@ -12,9 +12,7 @@ import org.springframework.stereotype.Service;
 import java.nio.file.Path;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.function.Consumer;
 
 /**
@@ -63,16 +61,7 @@ public class DocumentIngestService {
             // 整篇拍平路径只有一个单元，切分行为与旧实现完全一致
             List<Document> chunks = new ArrayList<>();
             for (TextUnit unit : units) {
-                Map<String, Object> metadata = new HashMap<>();
-                metadata.put("doc_id", docId);
-                metadata.put("doc_name", fileName);
-                if (unit.page() != null) {
-                    metadata.put("page", unit.page());
-                }
-                if (unit.section() != null) {
-                    metadata.put("section", unit.section());
-                }
-                chunks.addAll(textSplitter.apply(List.of(new Document(unit.text(), metadata))));
+                chunks.addAll(textSplitter.apply(List.of(new Document(unit.text(), unit.toMetadata(docId, fileName)))));
             }
             if (chunks.isEmpty()) {
                 throw new IllegalStateException("文档切分后未产生有效切片");
@@ -86,24 +75,14 @@ public class DocumentIngestService {
                 vectorStore.add(chunks.subList(i, Math.min(i + batchSize, total)));
                 reportProgress(docId, Math.min(i + batchSize, total), total);
             }
-            mutateDocument(docId, entity -> {
-                entity.setStatus(DocumentStatus.COMPLETED);
-                entity.setChunkCount(total);
-                entity.setChunkTotal(0);
-                entity.setErrorMessage(null);
-            });
+            mutateDocument(docId, entity -> entity.markCompleted(total));
             log.info("资料入库完成：{} -> {} 个切片（docId={}），耗时 {} ms",
                     fileName, total, docId, System.currentTimeMillis() - startAt);
         } catch (Exception e) {
             log.error("资料入库失败（docId={}，file={}）", docId, fileName, e);
             // 分批写入可能在半途失败，清掉残留切片，避免脏数据参与检索
             deleteVectorsQuietly(docId);
-            mutateDocument(docId, entity -> {
-                entity.setStatus(DocumentStatus.FAILED);
-                entity.setChunkCount(0);
-                entity.setChunkTotal(0);
-                entity.setErrorMessage(abbreviate(e));
-            });
+            mutateDocument(docId, entity -> entity.markFailed(abbreviate(e)));
         }
     }
 

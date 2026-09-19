@@ -119,7 +119,8 @@ rag:
     language: ${OCR_LANGUAGE:chi_sim+eng}
     # 渲染 DPI：300 为识别精度与耗时的平衡点，低配机器可降到 200
     dpi: ${OCR_DPI:300}
-    # Tika 提取文本少于该字符数视为无有效文本层，触发整本 OCR 兜底（页级兜底改造后按单页判断）
+    # 字符数阈值，注明两种语义：当前实现为整本语义——整本 Tika 提取文本少于该字符数视为无有效文本层，
+    # 触发整本 OCR 兜底；页级兜底改造后切换为单页语义——单页可提取文本少于该字符数即识别该页
     min-text-length: ${OCR_MIN_TEXT_LENGTH:100}
     # OCR 最大页数保护（0 = 不限制）：防止数百页扫描件长期占用入库线程池
     max-pages: ${OCR_MAX_PAGES:0}

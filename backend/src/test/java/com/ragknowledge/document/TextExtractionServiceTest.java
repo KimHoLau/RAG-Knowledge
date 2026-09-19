@@ -22,7 +22,7 @@ class TextExtractionServiceTest {
 
     /** OCR 关闭：当前缝隙只覆盖 Tika 整篇路径，不依赖 tessdata 与真实扫描件 */
     private final TextExtractionService service =
-            new TextExtractionService(new PdfOcrService(false, "./data/tessdata", "chi_sim+eng", 300, 100, 0));
+            new TextExtractionService(new PdfOcrService(OcrSettings.disabled()));
 
     @Test
     @DisplayName("整篇拍平路径产出单个无定位文本单元")
@@ -39,9 +39,9 @@ class TextExtractionServiceTest {
     }
 
     @Test
-    @DisplayName("提取不到任何文本时抛出带可操作指引的业务错误")
+    @DisplayName("提取不到任何文本时抛出带可操作指引的提取失败异常")
     void blankContentThrowsActionableError() {
-        IllegalStateException error = assertThrows(IllegalStateException.class,
+        TextExtractionException error = assertThrows(TextExtractionException.class,
                 () -> service.extract(fixture("empty.txt"), (done, total) -> { }));
 
         assertTrue(error.getMessage().contains("无有效文本层"), "错误信息应指向文本层问题而非 OCR 结果");

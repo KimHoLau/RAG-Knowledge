@@ -17,8 +17,9 @@ import java.util.stream.Collectors;
 /**
  * 文本单元提取服务：入库管线的文本来源出口，各格式的提取路径在此汇成统一的"文本单元"列表
  * （文本 + 可空定位），之后共用切分 → 向量化 → pgvector 管线（ADR-0001）。
+ * 失败统一以 TextExtractionException 抛出——签名不暴露任何格式的实现类型，
+ * 后续 PDF 逐页 / PPT 逐 slide / docx 逐章节路径接入时本出口签名不变。
  * 当前仅有 Tika 整篇拍平路径（.doc/.txt/.md/html 及未改造格式均走此路）；
- * PDF 逐页 / PPT 逐 slide / docx 逐章节路径由后续票接入。
  * 扫描件 PDF 的整本 OCR 兜底暂挂在提取服务内（Tika 文本过少时触发），
  * 页级兜底改造后整本循环移入 PDF 页提取路径、本服务只保留单页识别职责的调用。
  */
@@ -38,18 +39,22 @@ public class TextExtractionService {
      * pageProgress 回调 (已完成页数, 总页数) 仅在 OCR 兜底阶段有回调值：
      * OCR 是分钟级耗时操作，页级进度借 chunkCount/chunkTotal 字段上报，前端同一进度条展示。
      */
-    public List<TextUnit> extract(Path file, BiConsumer<Integer, Integer> pageProgress)
-            throws IOException, TesseractException {
+    public List<TextUnit> extract(Path file, BiConsumer<Integer, Integer> pageProgress) {
         String text = tikaText(file);
         boolean ocrAttempted = false;
         if (ocrService.shouldOcr(file, text)) {
             log.info("检测到扫描件 PDF（Tika 文本 {} 字符），转 OCR 兜底识别：{}", text.length(), file.getFileName());
-            text = ocrService.recognizePdf(file, pageProgress);
+            try {
+                text = ocrService.recognizePdf(file, pageProgress);
+            } catch (IOException | TesseractException e) {
+                // PDF 渲染/OCR 识别的技术失败收敛为领域异常，中文消息直接落库 errorMessage
+                throw new TextExtractionException("OCR 识别失败：" + describe(e), e);
+            }
             ocrAttempted = true;
         }
         if (text.isBlank()) {
             // 未走 OCR 时（功能关闭或非 PDF）如实说"无文本层"，不要误报成 OCR 的识别结果
-            throw new IllegalStateException(ocrAttempted
+            throw new TextExtractionException(ocrAttempted
                     ? "未能从文件中提取到文本内容（OCR 识别后仍无有效文本）"
                     : "未能从文件中提取到文本内容（文档无有效文本层；若为扫描件 PDF 请确认 OCR 已开启并已下载语言包）");
         }
@@ -64,5 +69,11 @@ public class TextExtractionService {
                 .filter(t -> t != null && !t.isBlank())
                 .collect(Collectors.joining("\n\n"))
                 .trim();
+    }
+
+    /** 异常消息兜底：tess4j/PDFBox 可能抛无消息的异常，落库时用类名代替 null */
+    private static String describe(Exception e) {
+        String msg = e.getMessage();
+        return msg == null || msg.isBlank() ? e.getClass().getSimpleName() : msg;
     }
 }

@@ -43,6 +43,11 @@ public class DocumentService {
     private final DocumentIngestService ingestService;
     private final DocumentVectorRepository vectorRepository;
     private final Path storageDir;
+    /**
+     * 本进程启动时刻：Bean 构造发生在上下文刷新阶段，早于 Web 容器开始接收请求，
+     * 可作"上次遗留的处理中文档"的判定分界（updatedAt 全部由应用时钟写入，跨重启可比）。
+     */
+    private final LocalDateTime processStartedAt = LocalDateTime.now();
 
     public DocumentService(DocumentRepository repository,
                            DocumentIngestService ingestService,
@@ -93,11 +98,8 @@ public class DocumentService {
         entity.setFileName(fileName);
         entity.setFileType(fileType);
         entity.setFileSize(file.getSize());
-        entity.setChunkCount(0);
-        entity.setChunkTotal(0);
-        entity.setStatus(DocumentStatus.PROCESSING);
+        entity.markProcessing();
         entity.setCreatedAt(LocalDateTime.now());
-        entity.setUpdatedAt(LocalDateTime.now());
         try {
             repository.save(entity);
         } catch (RuntimeException e) {
@@ -130,10 +132,7 @@ public class DocumentService {
      */
     public DocumentFile load(String docId) {
         DocumentEntity entity = requireDocument(docId);
-        Path file = storagePath(docId, entity.getFileName());
-        if (!Files.isRegularFile(file)) {
-            throw new BizException("源文件已不存在，无法下载");
-        }
+        Path file = requireSourceFile(docId, entity.getFileName(), "下载");
         return new DocumentFile(entity.getFileName(), new FileSystemResource(file));
     }
 
@@ -147,15 +146,8 @@ public class DocumentService {
         if (entity.getStatus() != DocumentStatus.FAILED) {
             throw new BizException("仅入库失败的文档可重试（当前状态：" + statusText(entity.getStatus()) + "）");
         }
-        Path file = storagePath(docId, entity.getFileName());
-        if (!Files.isRegularFile(file)) {
-            throw new BizException("源文件已不存在，无法重试入库，请删除后重新上传");
-        }
-        entity.setStatus(DocumentStatus.PROCESSING);
-        entity.setChunkCount(0);
-        entity.setChunkTotal(0);
-        entity.setErrorMessage(null);
-        entity.setUpdatedAt(LocalDateTime.now());
+        Path file = requireSourceFile(docId, entity.getFileName(), "重试入库，请删除后重新上传");
+        entity.markProcessing();
         DocumentVO vo = DocumentVO.from(repository.save(entity));
         // 与上传共用同一条异步入库路径；批次向量化半途失败仍由入库服务全有全无清理
         ingestService.ingest(docId, file, entity.getFileName());
@@ -167,10 +159,14 @@ public class DocumentService {
      * 启动清扫：上次进程中断遗留的处理中文档不会再有结果（入库线程已随进程消失），
      * 应用就绪时统一标记为失败终态并按 doc_id 清掉半成品切片，
      * 避免列表里永远转圈的文档、也避免残留切片悄悄参与检索。
+     * 只清 updatedAt 早于本进程启动时刻的文档——就绪事件发出时 Web 容器已开始接收请求，
+     * 不加分界会把启动窗口内刚上传、正在入库的文档误判为遗留。
      */
     @EventListener(ApplicationReadyEvent.class)
     public void sweepInterruptedIngests() {
-        List<DocumentEntity> stuck = repository.findByStatus(DocumentStatus.PROCESSING);
+        List<DocumentEntity> stuck = repository.findByStatus(DocumentStatus.PROCESSING).stream()
+                .filter(entity -> entity.getUpdatedAt() != null && entity.getUpdatedAt().isBefore(processStartedAt))
+                .toList();
         if (stuck.isEmpty()) {
             return;
         }
@@ -178,11 +174,7 @@ public class DocumentService {
         for (DocumentEntity entity : stuck) {
             try {
                 vectorRepository.deleteByDocId(entity.getId());
-                entity.setStatus(DocumentStatus.FAILED);
-                entity.setChunkCount(0);
-                entity.setChunkTotal(0);
-                entity.setErrorMessage("服务重启中断，可重试入库");
-                entity.setUpdatedAt(LocalDateTime.now());
+                entity.markFailed("服务重启中断，可重试入库");
                 repository.save(entity);
                 log.warn("已清扫中断文档：{}（{}）", entity.getFileName(), entity.getId());
             } catch (Exception e) {
@@ -203,6 +195,19 @@ public class DocumentService {
     /** 按 id 取文档，不存在时报业务错误：下载、删除与重试共用同一出口 */
     private DocumentEntity requireDocument(String docId) {
         return repository.findById(docId).orElseThrow(() -> new BizException("文档不存在"));
+    }
+
+    /**
+     * 校验源文件仍在盘并返回其路径，action 说明用途以拼入错误消息。
+     * 文件被外部清理（手工删目录、换机器部署等）时给明确业务提示，而不是让下载拿到 500、
+     * 或重试等入库线程稍后才静默报错。
+     */
+    private Path requireSourceFile(String docId, String fileName, String action) {
+        Path file = storagePath(docId, fileName);
+        if (!Files.isRegularFile(file)) {
+            throw new BizException("源文件已不存在，无法" + action);
+        }
+        return file;
     }
 
     private void deleteFileQuietly(Path file) {

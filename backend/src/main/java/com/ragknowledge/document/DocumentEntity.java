@@ -130,4 +130,39 @@ public class DocumentEntity {
     public void setUpdatedAt(LocalDateTime updatedAt) {
         this.updatedAt = updatedAt;
     }
+
+    /**
+     * 进入处理中：进度归零、错误信息清空。
+     * 上传登记与失败重试共用同一状态入口，保证"新一轮开始"的字段语义只在这一处定义。
+     */
+    public void markProcessing() {
+        this.status = DocumentStatus.PROCESSING;
+        this.chunkCount = 0;
+        this.chunkTotal = 0;
+        this.errorMessage = null;
+        this.updatedAt = LocalDateTime.now();
+    }
+
+    /**
+     * 入库完成终态：chunkCount 固化为最终切片数（前端展示总量），进度条使命结束、chunkTotal 归零。
+     */
+    public void markCompleted(int chunkCount) {
+        this.status = DocumentStatus.COMPLETED;
+        this.chunkCount = chunkCount;
+        this.chunkTotal = 0;
+        this.errorMessage = null;
+        this.updatedAt = LocalDateTime.now();
+    }
+
+    /**
+     * 失败终态：进度归零、错误信息落库。
+     * 入库失败与启动清扫共用同一状态入口，保证"失败长什么样"只在这一处定义。
+     */
+    public void markFailed(String message) {
+        this.status = DocumentStatus.FAILED;
+        this.chunkCount = 0;
+        this.chunkTotal = 0;
+        this.errorMessage = message;
+        this.updatedAt = LocalDateTime.now();
+    }
 }
