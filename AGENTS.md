@@ -94,3 +94,17 @@ cd frontend && npm run build                # 构建验证
 - 端到端联调需三件套齐备：数据库、向量服务、智谱 API Key；缺 Key 时后端能起但问答必失败。重排序服务是可选的第四件，未启用或不可达时自动退回向量排序。OCR 语言包是可选的第五件，未下载时仅扫描件 PDF 入库 FAILED，普通文档不受影响。
 - 检索调参：`RAG_TOP_K`（默认 5）、`RAG_CANDIDATE_TOP_K`（默认 10，送入重排序的召回候选数）、`RAG_SIMILARITY_THRESHOLD`（默认 0.45）；/api/search 不过阈值，/api/chat 检索过阈值，两者是故意的差异。
 - Spring AI 2.0.x 必须搭配 Spring Boot 4.x；TokenTextSplitter 构造器签名与 1.x 不同。
+
+## Agent skills
+
+### Issue tracker
+
+Issues live in GitHub Issues on `KimHoLau/RAG-Knowledge` (via the `gh` CLI). See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Five canonical triage roles used as-is (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`). See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: one `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents/domain.md`.
