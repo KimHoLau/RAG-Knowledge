@@ -3,26 +3,25 @@ package com.ragknowledge.document;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.document.Document;
-import org.springframework.ai.reader.tika.TikaDocumentReader;
 import org.springframework.ai.transformer.splitter.TokenTextSplitter;
 import org.springframework.ai.vectorstore.VectorStore;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.core.io.FileSystemResource;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
 import java.nio.file.Path;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Consumer;
-import java.util.stream.Collectors;
 
 /**
- * 资料入库：Tika 解析（PDF/Word/PPT，扫描件 PDF 文本层缺失时自动转 PdfOcrService 识别）
+ * 资料入库：文本单元提取（Tika 整篇拍平，扫描件 PDF 文本层缺失时在提取服务内自动转 PdfOcrService 识别）
  * -> TokenTextSplitter 切分 -> qwen3-embedding:4b 向量化 -> pgvector 存储。
- * 切片 metadata 中写入 doc_id / doc_name，用于溯源展示与按文档删除。
+ * 切片 metadata 中写入 doc_id / doc_name（及定位信息 page/section，逐页与章节路径接入后生效），
+ * 用于溯源展示、引用定位与按文档删除。
  */
 @Service
 public class DocumentIngestService {
@@ -33,20 +32,20 @@ public class DocumentIngestService {
     private final DocumentVectorRepository vectorRepository;
     private final VectorStore vectorStore;
     private final TokenTextSplitter textSplitter;
-    private final PdfOcrService ocrService;
+    private final TextExtractionService extractionService;
     private final int batchSize;
 
     public DocumentIngestService(DocumentRepository repository,
                                  DocumentVectorRepository vectorRepository,
                                  VectorStore vectorStore,
                                  TokenTextSplitter textSplitter,
-                                 PdfOcrService ocrService,
+                                 TextExtractionService extractionService,
                                  @Value("${rag.ingest.batch-size}") int batchSize) {
         this.repository = repository;
         this.vectorRepository = vectorRepository;
         this.vectorStore = vectorStore;
         this.textSplitter = textSplitter;
-        this.ocrService = ocrService;
+        this.extractionService = extractionService;
         this.batchSize = Math.max(1, batchSize);
     }
 
@@ -54,29 +53,27 @@ public class DocumentIngestService {
     public void ingest(String docId, Path file, String fileName) {
         long startAt = System.currentTimeMillis();
         try {
-            String text = extractText(file);
-            // 扫描件 PDF 没有有效文本层：自动转 tess4j OCR，识别文本回填后走同一条切分/向量化管线，
-            // OCR 是分钟级耗时操作，页级进度借 chunkCount/chunkTotal 上报，前端同一进度条展示
-            boolean ocrAttempted = false;
-            if (ocrService.shouldOcr(file, text)) {
-                log.info("检测到扫描件 PDF（Tika 文本 {} 字符），转 OCR 识别：{}", text.length(), fileName);
-                text = ocrService.recognizePdf(file, (done, total) -> reportProgress(docId, done, total));
-                ocrAttempted = true;
-            }
-            if (text.isBlank()) {
-                // 未走 OCR 时（功能关闭或非 PDF）如实说"无文本层"，不要误报成 OCR 的识别结果
-                throw new IllegalStateException(ocrAttempted
-                        ? "未能从文件中提取到文本内容（OCR 识别后仍无有效文本）"
-                        : "未能从文件中提取到文本内容（文档无有效文本层；若为扫描件 PDF 请确认 OCR 已开启并已下载语言包）");
-            }
+            // 提取服务产出统一文本单元；扫描件 PDF 的整本 OCR 兜底也在其中，
+            // 页级进度借 chunkCount/chunkTotal 上报，前端同一进度条展示
+            List<TextUnit> units = extractionService.extract(file, (done, total) -> reportProgress(docId, done, total));
             // 入库前先清掉该文档的历史切片：失败重传、重复入库都不会留下重复向量
             vectorRepository.deleteByDocId(docId);
 
-            Map<String, Object> metadata = new HashMap<>();
-            metadata.put("doc_id", docId);
-            metadata.put("doc_name", fileName);
-
-            List<Document> chunks = textSplitter.apply(List.of(new Document(text, metadata)));
+            // 每个文本单元独立切分：定位信息（页码/章节）不会跨单元串片，
+            // 整篇拍平路径只有一个单元，切分行为与旧实现完全一致
+            List<Document> chunks = new ArrayList<>();
+            for (TextUnit unit : units) {
+                Map<String, Object> metadata = new HashMap<>();
+                metadata.put("doc_id", docId);
+                metadata.put("doc_name", fileName);
+                if (unit.page() != null) {
+                    metadata.put("page", unit.page());
+                }
+                if (unit.section() != null) {
+                    metadata.put("section", unit.section());
+                }
+                chunks.addAll(textSplitter.apply(List.of(new Document(unit.text(), metadata))));
+            }
             if (chunks.isEmpty()) {
                 throw new IllegalStateException("文档切分后未产生有效切片");
             }
@@ -108,16 +105,6 @@ public class DocumentIngestService {
                 entity.setErrorMessage(abbreviate(e));
             });
         }
-    }
-
-    private String extractText(Path file) throws Exception {
-        // 交给 Resource 按需打开文件，避免把整个文件（上限 100MB）一次性读进堆
-        TikaDocumentReader reader = new TikaDocumentReader(new FileSystemResource(file));
-        return reader.read().stream()
-                .map(Document::getText)
-                .filter(t -> t != null && !t.isBlank())
-                .collect(Collectors.joining("\n\n"))
-                .trim();
     }
 
     /**
