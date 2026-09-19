@@ -6,6 +6,8 @@ import com.ragknowledge.document.dto.DocumentVO;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.context.event.ApplicationReadyEvent;
+import org.springframework.context.event.EventListener;
 import org.springframework.core.io.FileSystemResource;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -135,6 +137,70 @@ public class DocumentService {
             throw new BizException("源文件已不存在，无法下载");
         }
         return new DocumentFile(entity.getFileName(), new FileSystemResource(file));
+    }
+
+    /**
+     * 重试入库：对失败终态的文档复用已落盘源文件与既有异步入库路径，不必删除后重新上传。
+     * 仅失败终态可触发（处理中/已完成重跑只会制造重复切片与混乱状态）；
+     * 触发前校验源文件仍在盘——文件被外部清理时给明确提示，而不是等入库线程稍后才报错。
+     */
+    public DocumentVO retry(String docId) {
+        DocumentEntity entity = repository.findById(docId)
+                .orElseThrow(() -> new BizException("文档不存在"));
+        if (entity.getStatus() != DocumentStatus.FAILED) {
+            throw new BizException("仅入库失败的文档可重试（当前状态：" + statusText(entity.getStatus()) + "）");
+        }
+        Path file = storagePath(docId, entity.getFileName());
+        if (!Files.isRegularFile(file)) {
+            throw new BizException("源文件已不存在，无法重试入库，请删除后重新上传");
+        }
+        entity.setStatus(DocumentStatus.PROCESSING);
+        entity.setChunkCount(0);
+        entity.setChunkTotal(0);
+        entity.setErrorMessage(null);
+        entity.setUpdatedAt(LocalDateTime.now());
+        DocumentVO vo = DocumentVO.from(repository.save(entity));
+        // 与上传共用同一条异步入库路径；批次向量化半途失败仍由入库服务全有全无清理
+        ingestService.ingest(docId, file, entity.getFileName());
+        log.info("已触发重试入库：{}（{}）", entity.getFileName(), docId);
+        return vo;
+    }
+
+    /**
+     * 启动清扫：上次进程中断遗留的处理中文档不会再有结果（入库线程已随进程消失），
+     * 应用就绪时统一标记为失败终态并按 doc_id 清掉半成品切片，
+     * 避免列表里永远转圈的文档、也避免残留切片悄悄参与检索。
+     */
+    @EventListener(ApplicationReadyEvent.class)
+    public void sweepInterruptedIngests() {
+        List<DocumentEntity> stuck = repository.findByStatus(DocumentStatus.PROCESSING);
+        if (stuck.isEmpty()) {
+            return;
+        }
+        log.warn("检测到 {} 个服务重启中断的处理中文档，清扫为失败终态", stuck.size());
+        for (DocumentEntity entity : stuck) {
+            try {
+                vectorRepository.deleteByDocId(entity.getId());
+                entity.setStatus(DocumentStatus.FAILED);
+                entity.setChunkCount(0);
+                entity.setChunkTotal(0);
+                entity.setErrorMessage("服务重启中断，可重试入库");
+                entity.setUpdatedAt(LocalDateTime.now());
+                repository.save(entity);
+                log.warn("已清扫中断文档：{}（{}）", entity.getFileName(), entity.getId());
+            } catch (Exception e) {
+                // 单个文档清扫失败只记录，不能让启动被一个坏数据卡死
+                log.error("清扫中断文档失败（docId={}）：{}", entity.getId(), e.getMessage());
+            }
+        }
+    }
+
+    private String statusText(DocumentStatus status) {
+        return switch (status) {
+            case PROCESSING -> "处理中";
+            case COMPLETED -> "已完成";
+            case FAILED -> "失败";
+        };
     }
 
     private void deleteFileQuietly(Path file) {

@@ -66,4 +66,10 @@ public class DocumentController {
         documentService.delete(id);
         return ApiResult.ok();
     }
+
+    /** 重试入库：仅失败终态可触发；源文件被清理或状态不满足时返回明确业务提示 */
+    @PostMapping("/{id}/retry")
+    public ApiResult<DocumentVO> retry(@PathVariable String id) {
+        return ApiResult.ok(documentService.retry(id));
+    }
 }
